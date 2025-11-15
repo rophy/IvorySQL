@@ -1,3 +1,8 @@
+# Background
+
+This project is a work of [IvorySQL](https://github.com/IvorySQL/IvorySQL). Changes can be reviewed by comparing HEAD with upstream/master.
+
+
 # Build Instructions
 
 ## Git Commit Policy (MANDATORY)

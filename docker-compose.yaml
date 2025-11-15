@@ -1,0 +1,12 @@
+services:
+  # Ubuntu-based development environment (recommended)
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ivorysql-dev
+    container_name: ivorysql-dev
+    volumes:
+      - .:/home/ivorysql/IvorySQL:rw
+    working_dir: /home/ivorysql/IvorySQL
+    command: ["sleep", "infinity"]

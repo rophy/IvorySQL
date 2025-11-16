@@ -50,3 +50,68 @@ docker compose exec dev make oracle-check
 # Both test suites
 docker compose exec dev make all-check
 ```
+
+## Manual Testing with Oracle Compatibility
+
+When you need to test SQL manually (e.g., testing PL/iSQL packages):
+
+1. **Initialize a test database in Oracle mode**
+   ```bash
+   docker compose exec dev bash -c "
+   export PATH=/home/ivorysql/ivorysql/bin:\$PATH
+   export LD_LIBRARY_PATH=/home/ivorysql/ivorysql/lib:\$LD_LIBRARY_PATH
+   cd /home/ivorysql
+   rm -rf test_oracle
+   initdb -D test_oracle --auth=trust -m oracle
+   "
+   ```
+
+2. **Start the database server**
+   ```bash
+   docker compose exec dev bash -c "
+   export PATH=/home/ivorysql/ivorysql/bin:\$PATH
+   export LD_LIBRARY_PATH=/home/ivorysql/ivorysql/lib:\$LD_LIBRARY_PATH
+   pg_ctl -D /home/ivorysql/test_oracle -l /home/ivorysql/test_oracle/logfile start
+   "
+   ```
+
+   **Note:** Oracle mode servers listen on **both ports**:
+   - Port 5432 (PostgreSQL default)
+   - Port 1521 (Oracle default)
+
+3. **Create a test database**
+   ```bash
+   docker compose exec dev bash -c "
+   export PATH=/home/ivorysql/ivorysql/bin:\$PATH
+   export LD_LIBRARY_PATH=/home/ivorysql/ivorysql/lib:\$LD_LIBRARY_PATH
+   createdb testdb
+   "
+   ```
+
+4. **Connect and test (use Oracle port 1521)**
+   ```bash
+   # Interactive connection
+   docker compose exec dev bash -c "
+   export PATH=/home/ivorysql/ivorysql/bin:\$PATH
+   export LD_LIBRARY_PATH=/home/ivorysql/ivorysql/lib:\$LD_LIBRARY_PATH
+   psql -h localhost -p 1521 -d testdb
+   "
+
+   # Run a SQL file
+   docker compose exec dev bash -c "
+   export PATH=/home/ivorysql/ivorysql/bin:\$PATH
+   export LD_LIBRARY_PATH=/home/ivorysql/ivorysql/lib:\$LD_LIBRARY_PATH
+   psql -h localhost -p 1521 -d testdb -f /path/to/your/file.sql
+   "
+   ```
+
+5. **Stop the test server when done**
+   ```bash
+   docker compose exec dev bash -c "
+   export PATH=/home/ivorysql/ivorysql/bin:\$PATH
+   export LD_LIBRARY_PATH=/home/ivorysql/ivorysql/lib:\$LD_LIBRARY_PATH
+   pg_ctl -D /home/ivorysql/test_oracle stop -m fast
+   "
+   ```
+
+**Important:** Always use port **1521** when testing Oracle PL/SQL compatibility features (packages, PL/iSQL procedures, etc.)

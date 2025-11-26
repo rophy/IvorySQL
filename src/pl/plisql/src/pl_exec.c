@@ -42,6 +42,7 @@
 #include "plisql.h"
 #include "pl_subproc_function.h"
 #include "pl_package.h"
+#include "pl_autonomous.h"
 #include "storage/proc.h"
 #include "tcop/cmdtag.h"
 #include "tcop/pquery.h"
@@ -673,6 +674,30 @@ plisql_exec_function(PLiSQL_function * func, FunctionCallInfo fcinfo,
 	 */
 	if (*plisql_plugin_ptr && (*plisql_plugin_ptr)->func_beg)
 		((*plisql_plugin_ptr)->func_beg) (&estate, func);
+
+	/*
+	 * If this is an autonomous transaction function, delegate to dblink.
+	 * Skip if we're already inside an autonomous transaction (prevents recursion).
+	 * Also skip if we're being called during procedure compilation/validation.
+	 */
+	if (func->fn_is_autonomous &&
+		!plisql_inside_autonomous_transaction &&
+		fcinfo != NULL &&
+		fcinfo->flinfo != NULL &&
+		fcinfo->flinfo->fn_oid == func->fn_oid)  /* Real call, not validation */
+	{
+		Datum result;
+
+		result = plisql_exec_autonomous_function(func, fcinfo,
+												 simple_eval_estate,
+												 simple_eval_resowner);
+
+		/* Clean up and return */
+		plisql_destroy_econtext(&estate);
+		exec_eval_cleanup(&estate);
+		error_context_stack = plerrcontext.previous;
+		return result;
+	}
 
 	/*
 	 * Now call the toplevel block of statements

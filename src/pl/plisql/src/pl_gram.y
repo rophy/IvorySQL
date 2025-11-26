@@ -310,6 +310,7 @@ static	PLiSQL_expr		*build_call_expr(int firsttoken, int location, YYSTYPE *yylv
 %token <keyword>	K_AS
 %token <keyword>	K_ASSERT
 %token <keyword>	K_AUTHID
+%token <keyword>	K_AUTONOMOUS_TRANSACTION
 %token <keyword>	K_BACKWARD
 %token <keyword>	K_BEGIN
 %token <keyword>	K_BY
@@ -390,6 +391,7 @@ static	PLiSQL_expr		*build_call_expr(int firsttoken, int location, YYSTYPE *yylv
 %token <keyword>	K_PG_EXCEPTION_HINT
 %token <keyword>	K_PIPELINED
 %token <keyword>	K_PG_ROUTINE_OID
+%token <keyword>	K_PRAGMA
 %token <keyword>	K_PRINT_STRICT_PARAMS
 %token <keyword>	K_PRIOR
 %token <keyword>	K_PROCEDURE
@@ -815,6 +817,11 @@ decl_statement	: decl_varname decl_const decl_datatype decl_collate decl_notnull
 						else
 							new->cursor_explicit_argrow = $5->dno;
 						new->cursor_options = CURSOR_OPT_FAST_PLAN | $2;
+					}
+				| K_PRAGMA K_AUTONOMOUS_TRANSACTION ';'
+					{
+						plisql_mark_autonomous_transaction(plisql_curr_compile,
+														   @1, yyscanner);
 					}
 				/* function or procedure declare or define */
 				| function_heading function_properties ';'

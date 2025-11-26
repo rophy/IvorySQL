@@ -115,3 +115,42 @@ When you need to test SQL manually (e.g., testing PL/iSQL packages):
    ```
 
 **Important:** Always use port **1521** when testing Oracle PL/SQL compatibility features (packages, PL/iSQL procedures, etc.)
+
+## Testing Against Real Oracle Database
+
+A real Oracle Database Free container is available for validating Oracle compatibility.
+
+### Container Information
+
+- **Container name:** `ivorysql-oracle-1`
+- **Image:** `container-registry.oracle.com/database/free:23.26.0.0-lite`
+- **Version:** Oracle 23.26 Free
+- **Status:** Managed by docker-compose (starts with `docker compose up -d`)
+
+### Connecting to Oracle
+
+**Interactive SQL*Plus session:**
+```bash
+docker exec -it ivorysql-oracle-1 sqlplus / as sysdba
+```
+
+**Run SQL from command line:**
+```bash
+docker exec ivorysql-oracle-1 bash -c "echo 'SELECT * FROM dual;' | sqlplus -s / as sysdba"
+```
+
+**Run inline SQL script:**
+```bash
+docker exec ivorysql-oracle-1 bash -c "cat << 'EOF' | sqlplus -s / as sysdba
+SET SERVEROUTPUT ON;
+DECLARE
+  result NUMBER;
+BEGIN
+  SELECT (100 - 50) * 0.01 INTO result FROM dual;
+  DBMS_OUTPUT.PUT_LINE('Result: ' || result);
+END;
+/
+EXIT;
+EOF
+"
+```

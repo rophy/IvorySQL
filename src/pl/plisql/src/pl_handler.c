@@ -58,6 +58,9 @@ bool		plisql_print_strict_params = false;
 
 bool		plisql_check_asserts = true;
 
+/* Flag to prevent recursive autonomous transaction execution */
+bool		plisql_inside_autonomous_transaction = false;
+
 static char *plisql_extra_warnings_string = NULL;
 static char *plisql_extra_errors_string = NULL;
 int			plisql_extra_warnings;
@@ -185,6 +188,14 @@ _PG_init(void)
 							 NULL,
 							 &plisql_check_asserts,
 							 true,
+							 PGC_USERSET, 0,
+							 NULL, NULL, NULL);
+
+	DefineCustomBoolVariable("plisql.inside_autonomous_transaction",
+							 gettext_noop("Internal flag to prevent recursive autonomous transaction execution."),
+							 NULL,
+							 &plisql_inside_autonomous_transaction,
+							 false,
 							 PGC_USERSET, 0,
 							 NULL, NULL, NULL);
 

@@ -125,11 +125,18 @@ get_procedure_name(Oid funcoid)
 
 	/* Get schema name for fully qualified name */
 	nspname = get_namespace_name(procstruct->pronamespace);
+	if (nspname == NULL)
+	{
+		/* Schema was dropped concurrently; use pg_catalog as fallback */
+		nspname = pstrdup("pg_catalog");
+	}
 
 	/* Build schema-qualified name */
 	result = psprintf("%s.%s", quote_identifier(nspname), quote_identifier(procname));
 
 	ReleaseSysCache(proctup);
+	if (nspname)
+		pfree(nspname);
 	return result;
 }
 
@@ -295,6 +302,7 @@ plisql_exec_autonomous_function(PLiSQL_function *func, FunctionCallInfo fcinfo,
 	char *connstr;
 	StringInfoData connstr_buf;
 	const char *port_str;
+	const char *host_str;
 	char *dbname;
 	Datum connstr_datum;
 	Datum sql_datum;
@@ -321,10 +329,29 @@ plisql_exec_autonomous_function(PLiSQL_function *func, FunctionCallInfo fcinfo,
 	/* Build SQL to call procedure by name */
 	sql = build_autonomous_call(func, fcinfo);
 
-	/* Build connection string */
+	/* Build connection string with libpq-safe quoting */
 	port_str = GetConfigOption("port", false, false);
 	initStringInfo(&connstr_buf);
-	appendStringInfo(&connstr_buf, "dbname=%s", quote_identifier(dbname));
+
+	/* Append dbname with single-quote escaping for libpq */
+	appendStringInfoString(&connstr_buf, "dbname='");
+	for (const char *p = dbname; *p; p++)
+	{
+		if (*p == '\'' || *p == '\\')
+			appendStringInfoChar(&connstr_buf, '\\');
+		appendStringInfoChar(&connstr_buf, *p);
+	}
+	appendStringInfoChar(&connstr_buf, '\'');
+
+	/* Add host if configured */
+	host_str = GetConfigOption("listen_addresses", false, false);
+	if (host_str && strcmp(host_str, "*") != 0 && strcmp(host_str, "") != 0)
+	{
+		/* Use localhost for local connections */
+		appendStringInfoString(&connstr_buf, " host=localhost");
+	}
+
+	/* Add port if configured */
 	if (port_str)
 		appendStringInfo(&connstr_buf, " port=%s", port_str);
 

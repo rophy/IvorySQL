@@ -31,6 +31,7 @@
 #include "pl_autonomous.h"
 
 static Oid	dblink_exec_oid = InvalidOid;
+static Oid	dblink_oid = InvalidOid;
 
 /**
  * Reset the cached dblink_exec OID when the pg_proc catalog changes.
@@ -45,8 +46,9 @@ static Oid	dblink_exec_oid = InvalidOid;
 static void
 dblink_oid_invalidation_callback(Datum arg, int cacheid, uint32 hashvalue)
 {
-	/* Reset the cached OID so it will be looked up again next time */
+	/* Reset the cached OIDs so they will be looked up again next time */
 	dblink_exec_oid = InvalidOid;
+	dblink_oid = InvalidOid;
 }
 
 /**
@@ -187,19 +189,21 @@ plisql_check_dblink_available(void)
 }
 
 /**
- * Construct the SQL CALL statement that invokes the specified function inside an autonomous session.
+ * Construct the SQL statement that invokes the specified function/procedure inside an autonomous session.
  *
  * Formats and quotes each argument according to its SQL type and wraps the call with session-local
- * settings required for autonomous execution.
+ * settings required for autonomous execution. For functions (non-VOID return type), builds a SELECT
+ * statement; for procedures (VOID return), builds a CALL statement.
  *
- * @param func The PL/pgSQL function descriptor representing the target procedure to call.
+ * @param func The PL/pgSQL function descriptor representing the target function/procedure.
  * @param fcinfo The FunctionCallInfo containing the actual call arguments to be formatted.
+ * @param is_function Output parameter set to true if this is a function, false if procedure.
  * @return A palloc'd null-terminated C string containing the complete SQL statement to execute
- *         (including mode/flag settings and the CALL ...(...) invocation). The caller is
+ *         (including mode/flag settings and the SELECT/CALL invocation). The caller is
  *         responsible for freeing the returned string with pfree.
  */
 static char *
-build_autonomous_call(PLiSQL_function *func, FunctionCallInfo fcinfo)
+build_autonomous_call(PLiSQL_function *func, FunctionCallInfo fcinfo, bool *is_function)
 {
 	StringInfoData sql;
 	StringInfoData args;
@@ -214,11 +218,14 @@ build_autonomous_call(PLiSQL_function *func, FunctionCallInfo fcinfo)
 	/* Get procedure/function name */
 	proc_name = get_procedure_name(func->fn_oid);
 
-	/* Get procedure info for argument types */
+	/* Get procedure info for argument types and return type */
 	proctup = SearchSysCache1(PROCOID, ObjectIdGetDatum(func->fn_oid));
 	if (!HeapTupleIsValid(proctup))
 		elog(ERROR, "cache lookup failed for function %u", func->fn_oid);
 	procstruct = (Form_pg_proc) GETSTRUCT(proctup);
+
+	/* Determine if this is a function (returns value) or procedure (void) */
+	*is_function = (procstruct->prorettype != VOIDOID);
 
 	/* Format arguments */
 	for (i = 0; i < fcinfo->nargs; i++)
@@ -269,13 +276,27 @@ build_autonomous_call(PLiSQL_function *func, FunctionCallInfo fcinfo)
 		}
 	}
 
-	/* Build complete SQL - call procedure by name with recursion prevention */
-	appendStringInfo(&sql,
-		"SET ivorysql.compatible_mode = oracle; "
-		"SET plisql.inside_autonomous_transaction = true; "
-		"CALL %s(%s);",
-		proc_name,
-		args.data);
+	/* Build complete SQL - use SELECT for functions, CALL for procedures */
+	if (*is_function)
+	{
+		/* Functions: use SELECT to capture return value */
+		appendStringInfo(&sql,
+			"SET ivorysql.compatible_mode = oracle; "
+			"SET plisql.inside_autonomous_transaction = true; "
+			"SELECT %s(%s);",
+			proc_name,
+			args.data);
+	}
+	else
+	{
+		/* Procedures: use CALL (no return value) */
+		appendStringInfo(&sql,
+			"SET ivorysql.compatible_mode = oracle; "
+			"SET plisql.inside_autonomous_transaction = true; "
+			"CALL %s(%s);",
+			proc_name,
+			args.data);
+	}
 
 	ReleaseSysCache(proctup);
 	pfree(proc_name);
@@ -285,14 +306,90 @@ build_autonomous_call(PLiSQL_function *func, FunctionCallInfo fcinfo)
 }
 
 /**
- * Execute a PL/iSQL function in an autonomous transaction by dispatching a constructed
- * CALL statement to a separate session via dblink.
+ * Execute an autonomous function (that returns a value) using dblink() and SPI.
+ *
+ * @param connstr libpq connection string for dblink
+ * @param sql SQL SELECT statement to execute
+ * @param rettype OID of the return type
+ * @param fcinfo Function call info (used to set isnull)
+ * @return The return value from the autonomous function
+ */
+static Datum
+execute_autonomous_function(char *connstr, char *sql, Oid rettype, FunctionCallInfo fcinfo)
+{
+	char *query;
+	int ret;
+	Datum result;
+	bool isnull;
+	int16 typlen;
+	bool typbyval;
+
+	/* Look up dblink() function if not cached */
+	if (!OidIsValid(dblink_oid))
+	{
+		Oid argtypes[2] = {TEXTOID, TEXTOID};
+		dblink_oid = LookupFuncName(list_make1(makeString("dblink")), 2, argtypes, true);
+		if (!OidIsValid(dblink_oid))
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_FUNCTION),
+					 errmsg("dblink function not found"),
+					 errhint("Install dblink extension: CREATE EXTENSION dblink")));
+	}
+
+	/* Build query: SELECT * FROM dblink('connstr', 'sql') AS t(result rettype) */
+	query = psprintf("SELECT * FROM dblink(%s, %s) AS t(result %s)",
+					 quote_literal_cstr(connstr),
+					 quote_literal_cstr(sql),
+					 format_type_be(rettype));
+
+	/* Execute via SPI */
+	SPI_connect();
+
+	ret = SPI_execute(query, true, 1);
+	if (ret != SPI_OK_SELECT)
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("autonomous function execution failed"),
+				 errdetail("SPI_execute returned %d", ret)));
+
+	if (SPI_processed != 1)
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("autonomous function returned unexpected number of rows: %lu",
+						(unsigned long) SPI_processed)));
+
+	/* Extract return value from result */
+	result = SPI_getbinval(SPI_tuptable->vals[0],
+						  SPI_tuptable->tupdesc,
+						  1,
+						  &isnull);
+
+	/* Get type information for datumCopy */
+	get_typlenbyval(rettype, &typlen, &typbyval);
+
+	/* Copy result to upper context before SPI_finish frees SPI memory */
+	if (!isnull && !typbyval)
+		result = datumCopy(result, typbyval, typlen);
+
+	SPI_finish();
+	pfree(query);
+
+	fcinfo->isnull = isnull;
+	return result;
+}
+
+/**
+ * Execute a PL/iSQL function or procedure in an autonomous transaction.
+ *
+ * For procedures (VOID return), dispatches a CALL statement via dblink_exec().
+ * For functions (non-VOID return), dispatches a SELECT statement via dblink() and SPI
+ * to capture the return value.
  *
  * @param func PLiSQL function object to invoke in the autonomous transaction.
  * @param fcinfo Call context carrying the function's argument values and result slot.
  * @param simple_eval_estate Evaluation estate used for simple-eval execution (passed through).
  * @param simple_eval_resowner Resource owner used for simple-eval execution (passed through).
- * @returns A NULL Datum; the function sets `fcinfo->isnull = true` and returns (Datum)0.
+ * @returns For functions: the return value. For procedures: NULL Datum with fcinfo->isnull = true.
  */
 Datum
 plisql_exec_autonomous_function(PLiSQL_function *func, FunctionCallInfo fcinfo,
@@ -307,8 +404,13 @@ plisql_exec_autonomous_function(PLiSQL_function *func, FunctionCallInfo fcinfo,
 	Datum connstr_datum;
 	Datum sql_datum;
 	Datum result_datum;
+	Datum result;
 	char *result_str;
 	Oid dblink_exec_oid_local;
+	bool is_function;
+	HeapTuple proctup;
+	Form_pg_proc procstruct;
+	Oid rettype;
 
 	/* Lookup dblink_exec function if not cached */
 	if (!OidIsValid(dblink_exec_oid))
@@ -326,8 +428,16 @@ plisql_exec_autonomous_function(PLiSQL_function *func, FunctionCallInfo fcinfo,
 	/* Get current database name dynamically */
 	dbname = get_current_database();
 
-	/* Build SQL to call procedure by name */
-	sql = build_autonomous_call(func, fcinfo);
+	/* Get return type to determine if this is a function or procedure */
+	proctup = SearchSysCache1(PROCOID, ObjectIdGetDatum(func->fn_oid));
+	if (!HeapTupleIsValid(proctup))
+		elog(ERROR, "cache lookup failed for function %u", func->fn_oid);
+	procstruct = (Form_pg_proc) GETSTRUCT(proctup);
+	rettype = procstruct->prorettype;
+	ReleaseSysCache(proctup);
+
+	/* Build SQL - will be SELECT for functions, CALL for procedures */
+	sql = build_autonomous_call(func, fcinfo, &is_function);
 
 	/* Build connection string with libpq-safe quoting */
 	port_str = GetConfigOption("port", false, false);
@@ -356,32 +466,61 @@ plisql_exec_autonomous_function(PLiSQL_function *func, FunctionCallInfo fcinfo,
 		appendStringInfo(&connstr_buf, " port=%s", port_str);
 
 	connstr = connstr_buf.data;
-	connstr_datum = CStringGetTextDatum(connstr);
-	sql_datum = CStringGetTextDatum(sql);
 
-	/* Execute via dblink - it will throw exception on error */
-	PG_TRY();
+	/* Execute based on whether this is a function or procedure */
+	if (is_function)
 	{
-		result_datum = OidFunctionCall2(dblink_exec_oid, connstr_datum, sql_datum);
-		result_str = TextDatumGetCString(result_datum);
-		pfree(result_str);  /* Result is typically "OK" or similar */
-	}
-	PG_CATCH();
-	{
-		/* Clean up and re-throw */
+		/* Function: use dblink() with SPI to capture return value */
+		PG_TRY();
+		{
+			result = execute_autonomous_function(connstr, sql, rettype, fcinfo);
+		}
+		PG_CATCH();
+		{
+			/* Clean up and re-throw */
+			pfree(connstr_buf.data);
+			pfree(sql);
+			pfree(dbname);
+			PG_RE_THROW();
+		}
+		PG_END_TRY();
+
+		/* Clean up */
 		pfree(connstr_buf.data);
 		pfree(sql);
 		pfree(dbname);
-		PG_RE_THROW();
+
+		return result;
 	}
-	PG_END_TRY();
+	else
+	{
+		/* Procedure: use dblink_exec() - no return value */
+		connstr_datum = CStringGetTextDatum(connstr);
+		sql_datum = CStringGetTextDatum(sql);
 
-	/* Clean up */
-	pfree(connstr_buf.data);
-	pfree(sql);
-	pfree(dbname);
+		PG_TRY();
+		{
+			result_datum = OidFunctionCall2(dblink_exec_oid, connstr_datum, sql_datum);
+			result_str = TextDatumGetCString(result_datum);
+			pfree(result_str);  /* Result is typically "OK" or similar */
+		}
+		PG_CATCH();
+		{
+			/* Clean up and re-throw */
+			pfree(connstr_buf.data);
+			pfree(sql);
+			pfree(dbname);
+			PG_RE_THROW();
+		}
+		PG_END_TRY();
 
-	/* For now, autonomous procedures return NULL */
-	fcinfo->isnull = true;
-	return (Datum) 0;
+		/* Clean up */
+		pfree(connstr_buf.data);
+		pfree(sql);
+		pfree(dbname);
+
+		/* Procedures return NULL */
+		fcinfo->isnull = true;
+		return (Datum) 0;
+	}
 }

@@ -212,6 +212,122 @@ SELECT id, msg FROM autonomous_test WHERE id IN (9, 10) ORDER BY id;
 (2 rows)
 
 --
+-- Test 10: Autonomous function with return value
+--
+CREATE OR REPLACE FUNCTION test_function_return(p_input INT) RETURN INT AS $$
+DECLARE
+    PRAGMA AUTONOMOUS_TRANSACTION;
+    v_result INT;
+BEGIN
+    v_result := p_input * 2;
+    INSERT INTO autonomous_test VALUES (p_input, 'function test', 'committed');
+    RETURN v_result;
+END;
+$$ LANGUAGE plisql;
+/
+COMMIT;
+WARNING:  there is no transaction in progress
+-- Call function and verify return value
+SELECT test_function_return(50) AS doubled_value;
+ doubled_value 
+---------------
+           100
+(1 row)
+
+-- Verify the function also did the insert
+SELECT id, msg FROM autonomous_test WHERE id = 50;
+ id |      msg      
+----+---------------
+ 50 | function test
+(1 row)
+
+--
+-- Test 11: Autonomous function with NULL return
+--
+CREATE OR REPLACE FUNCTION test_function_null() RETURN TEXT AS $$
+DECLARE
+    PRAGMA AUTONOMOUS_TRANSACTION;
+BEGIN
+    INSERT INTO autonomous_test VALUES (51, 'null return test', 'committed');
+    RETURN NULL;
+END;
+$$ LANGUAGE plisql;
+/
+COMMIT;
+WARNING:  there is no transaction in progress
+SELECT test_function_null() AS null_result;
+ null_result 
+-------------
+ 
+(1 row)
+
+SELECT id, msg FROM autonomous_test WHERE id = 51;
+ id |       msg        
+----+------------------
+ 51 | null return test
+(1 row)
+
+--
+-- Test 12: Explicit COMMIT in autonomous transaction (EXPECTED TO FAIL)
+-- Reference: https://github.com/IvorySQL/IvorySQL/issues/985
+-- PL/iSQL does not support COMMIT/ROLLBACK in procedures
+--
+/*
+CREATE OR REPLACE PROCEDURE test_explicit_commit(p_id INT) AS
+DECLARE
+    PRAGMA AUTONOMOUS_TRANSACTION;
+BEGIN
+    INSERT INTO autonomous_test VALUES (p_id, 'explicit commit', 'committed');
+    COMMIT;  -- Would fail: ERROR: invalid transaction termination
+END;
+/
+
+CALL test_explicit_commit(60);
+*/
+--
+-- Test 13: Explicit ROLLBACK in autonomous transaction (EXPECTED TO FAIL)
+-- Reference: https://github.com/IvorySQL/IvorySQL/issues/985
+-- PL/iSQL does not support COMMIT/ROLLBACK in procedures
+--
+/*
+CREATE OR REPLACE PROCEDURE test_explicit_rollback(p_id INT) AS
+DECLARE
+    PRAGMA AUTONOMOUS_TRANSACTION;
+BEGIN
+    INSERT INTO autonomous_test VALUES (p_id, 'should rollback', 'rolled back');
+    ROLLBACK;  -- Would fail: ERROR: invalid transaction termination
+    INSERT INTO autonomous_test VALUES (p_id + 1, 'after rollback', 'committed');
+END;
+/
+
+CALL test_explicit_rollback(70);
+-- Expected: id=71 survives, id=70 rolled back (if it worked)
+-- Actual: ERROR: invalid transaction termination
+*/
+--
+-- Test 14: Conditional transaction control (EXPECTED TO FAIL)
+-- Reference: https://github.com/IvorySQL/IvorySQL/issues/985
+-- This pattern is common in Oracle but not supported in PL/iSQL
+--
+/*
+CREATE OR REPLACE PROCEDURE test_conditional_tx(p_id INT, p_should_commit BOOLEAN) AS
+DECLARE
+    PRAGMA AUTONOMOUS_TRANSACTION;
+BEGIN
+    INSERT INTO autonomous_test VALUES (p_id, 'conditional', 'unknown');
+
+    IF p_should_commit THEN
+        COMMIT;  -- Would fail: ERROR: invalid transaction termination
+    ELSE
+        ROLLBACK;  -- Would fail: ERROR: invalid transaction termination
+    END IF;
+END;
+/
+
+CALL test_conditional_tx(80, true);
+CALL test_conditional_tx(81, false);
+*/
+--
 -- Summary: Show all test results
 --
 SELECT 'All autonomous transaction tests completed' AS status;
@@ -229,4 +345,6 @@ DROP PROCEDURE test_nulls(INT, TEXT);
 DROP PROCEDURE test_sequential(INT);
 DROP PROCEDURE test_persist(INT);
 DROP PROCEDURE test_oid_invalidation(INT);
+DROP FUNCTION test_function_return(INT);
+DROP FUNCTION test_function_null();
 DROP TABLE autonomous_test;

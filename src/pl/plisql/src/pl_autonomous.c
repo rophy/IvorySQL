@@ -221,6 +221,7 @@ build_autonomous_call(PLiSQL_function *func, FunctionCallInfo fcinfo)
 
 	ReleaseSysCache(proctup);
 	pfree(proc_name);
+	pfree(args.data);  /* Free args buffer after building SQL */
 
 	return sql.data;
 }
@@ -262,7 +263,7 @@ plisql_exec_autonomous_function(PLiSQL_function *func, FunctionCallInfo fcinfo,
 	/* Build connection string */
 	port_str = GetConfigOption("port", false, false);
 	initStringInfo(&connstr_buf);
-	appendStringInfo(&connstr_buf, "dbname=%s", dbname);
+	appendStringInfo(&connstr_buf, "dbname=%s", quote_identifier(dbname));
 	if (port_str)
 		appendStringInfo(&connstr_buf, " port=%s", port_str);
 
@@ -270,23 +271,17 @@ plisql_exec_autonomous_function(PLiSQL_function *func, FunctionCallInfo fcinfo,
 	connstr_datum = CStringGetTextDatum(connstr);
 	sql_datum = CStringGetTextDatum(sql);
 
-	/* Execute via dblink with error handling */
+	/* Execute via dblink - it will throw exception on error */
 	PG_TRY();
 	{
 		result_datum = OidFunctionCall2(dblink_exec_oid, connstr_datum, sql_datum);
 		result_str = TextDatumGetCString(result_datum);
-
-		/* Check for errors in result */
-		if (strncmp(result_str, "ERROR", 5) == 0)
-			ereport(ERROR,
-					(errcode(ERRCODE_EXTERNAL_ROUTINE_EXCEPTION),
-					 errmsg("autonomous transaction failed"),
-					 errdetail("%s", result_str)));
-		pfree(result_str);
+		pfree(result_str);  /* Result is typically "OK" or similar */
 	}
 	PG_CATCH();
 	{
 		/* Clean up and re-throw */
+		pfree(connstr_buf.data);
 		pfree(sql);
 		pfree(dbname);
 		PG_RE_THROW();
@@ -294,6 +289,7 @@ plisql_exec_autonomous_function(PLiSQL_function *func, FunctionCallInfo fcinfo,
 	PG_END_TRY();
 
 	/* Clean up */
+	pfree(connstr_buf.data);
 	pfree(sql);
 	pfree(dbname);
 

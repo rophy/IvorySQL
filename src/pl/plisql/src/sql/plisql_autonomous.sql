@@ -166,6 +166,32 @@ ROLLBACK;
 SELECT id, msg, tx_state FROM autonomous_test ORDER BY id;
 
 --
+-- Test 9: Extension drop/recreate - verify OID invalidation works
+--
+CREATE OR REPLACE PROCEDURE test_oid_invalidation(p_id INT) AS $$
+PRAGMA AUTONOMOUS_TRANSACTION;
+BEGIN
+    INSERT INTO autonomous_test VALUES (p_id, 'oid test', 'committed');
+END;
+$$ LANGUAGE plisql;
+/
+
+COMMIT;
+
+-- Call once to cache the OID
+CALL test_oid_invalidation(9);
+
+-- Drop and recreate dblink extension (OID will change)
+DROP EXTENSION dblink CASCADE;
+CREATE EXTENSION dblink;
+
+-- Call again - should work with new OID (tests invalidation callback)
+CALL test_oid_invalidation(10);
+
+-- Verify both calls succeeded
+SELECT id, msg FROM autonomous_test WHERE id IN (9, 10) ORDER BY id;
+
+--
 -- Summary: Show all test results
 --
 SELECT 'All autonomous transaction tests completed' AS status;
@@ -178,4 +204,5 @@ DROP PROCEDURE test_multi_types(INT, TEXT, BOOLEAN);
 DROP PROCEDURE test_nulls(INT, TEXT);
 DROP PROCEDURE test_sequential(INT);
 DROP PROCEDURE test_persist(INT);
+DROP PROCEDURE test_oid_invalidation(INT);
 DROP TABLE autonomous_test;

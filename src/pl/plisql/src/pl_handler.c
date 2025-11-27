@@ -199,6 +199,12 @@ _PG_init(void)
 							 PGC_USERSET, 0,
 							 NULL, NULL, NULL);
 
+	/*
+	 * Note: Must use PGC_USERSET (not PGC_INTERNAL) because autonomous
+	 * transactions execute via dblink in a separate connection, which must
+	 * be able to SET this flag via SQL to prevent infinite recursion.
+	 * Hidden from users via GUC_NOT_IN_SAMPLE | GUC_NO_SHOW_ALL | GUC_NO_RESET_ALL.
+	 */
 	DefineCustomBoolVariable("plisql.inside_autonomous_transaction",
 							 gettext_noop("Internal flag to prevent recursive autonomous transaction execution."),
 							 NULL,

@@ -692,6 +692,10 @@ plisql_exec_function(PLiSQL_function * func, FunctionCallInfo fcinfo,
 												 simple_eval_estate,
 												 simple_eval_resowner);
 
+		/* Let the instrumentation plugin see function end */
+		if (*plisql_plugin_ptr && (*plisql_plugin_ptr)->func_end)
+			((*plisql_plugin_ptr)->func_end) (&estate, func);
+
 		/* Clean up and return */
 		plisql_destroy_econtext(&estate);
 		exec_eval_cleanup(&estate);

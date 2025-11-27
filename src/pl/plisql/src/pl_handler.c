@@ -24,6 +24,7 @@
 #include "plisql.h"
 #include "pl_subproc_function.h"
 #include "pl_package.h"
+#include "pl_autonomous.h"
 #include "utils/builtins.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
@@ -230,6 +231,9 @@ _PG_init(void)
 
 	/* Set up a rendezvous point with optional instrumentation plugin */
 	plisql_plugin_ptr = (PLiSQL_plugin * *) find_rendezvous_variable("PLiSQL_plugin");
+
+	/* Register invalidation callback for cached dblink OID */
+	plisql_autonomous_init();
 
 	inited = true;
 }

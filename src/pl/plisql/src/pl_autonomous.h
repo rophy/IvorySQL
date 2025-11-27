@@ -18,6 +18,11 @@
 #include "plisql.h"
 
 /*
+ * Initialize autonomous transaction support (register callbacks)
+ */
+extern void plisql_autonomous_init(void);
+
+/*
  * Mark current function as autonomous
  */
 extern void plisql_mark_autonomous_transaction(PLiSQL_function *func,

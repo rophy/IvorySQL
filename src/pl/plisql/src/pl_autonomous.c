@@ -23,6 +23,7 @@
 #include "parser/parse_type.h"
 #include "utils/builtins.h"
 #include "utils/guc.h"
+#include "utils/inval.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 
@@ -30,6 +31,28 @@
 #include "pl_autonomous.h"
 
 static Oid	dblink_exec_oid = InvalidOid;
+
+/*
+ * Invalidation callback to reset cached dblink_exec OID.
+ * Called when pg_proc catalog changes (e.g., extension drop/recreate).
+ */
+static void
+dblink_oid_invalidation_callback(Datum arg, int cacheid, uint32 hashvalue)
+{
+	/* Reset the cached OID so it will be looked up again next time */
+	dblink_exec_oid = InvalidOid;
+}
+
+/*
+ * Initialize autonomous transaction support.
+ * Register syscache invalidation callback for dblink_exec OID.
+ */
+void
+plisql_autonomous_init(void)
+{
+	/* Register callback to invalidate cached dblink_exec OID on pg_proc changes */
+	CacheRegisterSyscacheCallback(PROCOID, dblink_oid_invalidation_callback, (Datum) 0);
+}
 
 /* Helper: Get current database name safely without SPI */
 static char *

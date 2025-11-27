@@ -32,9 +32,15 @@
 
 static Oid	dblink_exec_oid = InvalidOid;
 
-/*
- * Invalidation callback to reset cached dblink_exec OID.
- * Called when pg_proc catalog changes (e.g., extension drop/recreate).
+/**
+ * Reset the cached dblink_exec OID when the pg_proc catalog changes.
+ *
+ * This invalidation callback clears the module-level cache so the dblink_exec
+ * function OID will be looked up again on next use.
+ *
+ * @param arg Unused callback argument passed by the syscache infrastructure.
+ * @param cacheid Syscache identifier for the cache that signaled the invalidation.
+ * @param hashvalue Hash value associated with the cache event (unused).
  */
 static void
 dblink_oid_invalidation_callback(Datum arg, int cacheid, uint32 hashvalue)
@@ -43,9 +49,11 @@ dblink_oid_invalidation_callback(Datum arg, int cacheid, uint32 hashvalue)
 	dblink_exec_oid = InvalidOid;
 }
 
-/*
- * Initialize autonomous transaction support.
- * Register syscache invalidation callback for dblink_exec OID.
+/**
+ * Initialize support for autonomous transactions in PL/iSQL.
+ *
+ * Registers a syscache invalidation callback so the cached OID for
+ * dblink_exec is reset when pg_proc changes.
  */
 void
 plisql_autonomous_init(void)
@@ -54,7 +62,16 @@ plisql_autonomous_init(void)
 	CacheRegisterSyscacheCallback(PROCOID, dblink_oid_invalidation_callback, (Datum) 0);
 }
 
-/* Helper: Get current database name safely without SPI */
+/**
+ * Retrieve a duplicated copy of the current database name from the backend connection port.
+ *
+ * Errors if not running in a client backend or if the connection's database name is unavailable.
+ *
+ * @return A newly allocated, null-terminated string containing the current database name.
+ *         The string is allocated with pstrdup in the current memory context.
+ *
+ * @throws ERROR when MyProcPort is NULL (not a client backend) or when MyProcPort->database_name is NULL.
+ */
 static char *
 get_current_database(void)
 {
@@ -82,7 +99,14 @@ get_current_database(void)
 	return pstrdup(MyProcPort->database_name);
 }
 
-/* Helper: Get procedure/function name from OID */
+/**
+ * Construct the schema-qualified, quoted name of the function identified by the given OID.
+ *
+ * @param funcoid OID of the target function.
+ * @returns A palloc'd string containing the schema-qualified, quoted function name (e.g. "schema"."function").
+ *          Caller is responsible for freeing the returned string with pfree.
+ * @throws ERROR if the pg_proc cache lookup for the given OID fails.
+ */
 static char *
 get_procedure_name(Oid funcoid)
 {
@@ -109,6 +133,17 @@ get_procedure_name(Oid funcoid)
 	return result;
 }
 
+/**
+ * Mark a PL/pgPLiSQL function or procedure as an autonomous transaction.
+ *
+ * Validates that the pragma appears inside a function/procedure and that the
+ * function is not already marked autonomous; on validation failure a syntax
+ * error is reported using the provided parse location and scanner context.
+ *
+ * @param func The PLiSQL function object to mark; must be non-NULL.
+ * @param location Parse location used to produce an error cursor for diagnostics.
+ * @param yyscanner Scanner state used to produce an error cursor for diagnostics.
+ */
 void
 plisql_mark_autonomous_transaction(PLiSQL_function *func, int location, void *yyscanner)
 {
@@ -133,13 +168,29 @@ plisql_mark_autonomous_transaction(PLiSQL_function *func, int location, void *yy
 	func->fn_is_autonomous = true;
 }
 
+/**
+ * Check whether the dblink extension is installed in the current database.
+ *
+ * @returns `true` if the dblink extension is installed in the current database, `false` otherwise.
+ */
 bool
 plisql_check_dblink_available(void)
 {
 	return OidIsValid(get_extension_oid("dblink", true));
 }
 
-/* Build SQL to call procedure by name in autonomous session */
+/**
+ * Construct the SQL CALL statement that invokes the specified function inside an autonomous session.
+ *
+ * Formats and quotes each argument according to its SQL type and wraps the call with session-local
+ * settings required for autonomous execution.
+ *
+ * @param func The PL/pgSQL function descriptor representing the target procedure to call.
+ * @param fcinfo The FunctionCallInfo containing the actual call arguments to be formatted.
+ * @return A palloc'd null-terminated C string containing the complete SQL statement to execute
+ *         (including mode/flag settings and the CALL ...(...) invocation). The caller is
+ *         responsible for freeing the returned string with pfree.
+ */
 static char *
 build_autonomous_call(PLiSQL_function *func, FunctionCallInfo fcinfo)
 {
@@ -226,6 +277,16 @@ build_autonomous_call(PLiSQL_function *func, FunctionCallInfo fcinfo)
 	return sql.data;
 }
 
+/**
+ * Execute a PL/iSQL function in an autonomous transaction by dispatching a constructed
+ * CALL statement to a separate session via dblink.
+ *
+ * @param func PLiSQL function object to invoke in the autonomous transaction.
+ * @param fcinfo Call context carrying the function's argument values and result slot.
+ * @param simple_eval_estate Evaluation estate used for simple-eval execution (passed through).
+ * @param simple_eval_resowner Resource owner used for simple-eval execution (passed through).
+ * @returns A NULL Datum; the function sets `fcinfo->isnull = true` and returns (Datum)0.
+ */
 Datum
 plisql_exec_autonomous_function(PLiSQL_function *func, FunctionCallInfo fcinfo,
 								EState *simple_eval_estate, ResourceOwner simple_eval_resowner)

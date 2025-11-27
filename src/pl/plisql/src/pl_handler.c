@@ -151,10 +151,17 @@ plisql_extra_errors_assign_hook(const char *newvalue, void *extra)
 }
 
 
-/*
- * _PG_init()			- library load-time initialization
+/**
+ * Initialize the PL/iSQL shared library at load time.
  *
- * DO NOT make this static nor change its name!
+ * Registers module GUC variables (including hooks for extra checks), reserves
+ * the PL/iSQL GUC prefix, initializes module state and hash tables, registers
+ * transaction and subtransaction callbacks, registers internal functions,
+ * establishes the plugin rendezvous point, and initializes autonomous-transaction
+ * support.
+ *
+ * DO NOT make this function static or rename it; PostgreSQL calls it at library
+ * load time.
  */
 void
 _PG_init(void)

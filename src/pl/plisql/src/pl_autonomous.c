@@ -169,7 +169,15 @@ build_autonomous_call(PLiSQL_function *func, FunctionCallInfo fcinfo)
 				case FLOAT8OID:
 				case NUMERICOID:
 				case OIDOID:
+					/* Numeric types don't need quoting */
 					appendStringInfoString(&args, valstr);
+					break;
+				case BOOLOID:
+					/* Convert 't'/'f' to 'true'/'false' for SQL */
+					if (DatumGetBool(fcinfo->args[i].value))
+						appendStringInfoString(&args, "true");
+					else
+						appendStringInfoString(&args, "false");
 					break;
 				default:
 					/* Quote string literals and other types */

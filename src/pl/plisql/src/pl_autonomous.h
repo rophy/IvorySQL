@@ -16,7 +16,6 @@
 #define PL_AUTONOMOUS_H
 
 #include "plisql.h"
-#include "nodes/pg_list.h"
 
 /*
  * Mark current function as autonomous
@@ -37,11 +36,5 @@ extern Datum plisql_exec_autonomous_function(PLiSQL_function *func,
  * Check if dblink extension is available
  */
 extern bool plisql_check_dblink_available(void);
-
-/*
- * Build SQL command for autonomous execution via dblink
- */
-extern char *plisql_build_autonomous_sql(PLiSQL_function *func,
-										 FunctionCallInfo fcinfo);
 
 #endif							/* PL_AUTONOMOUS_H */

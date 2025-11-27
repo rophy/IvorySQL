@@ -196,7 +196,8 @@ _PG_init(void)
 							 NULL,
 							 &plisql_inside_autonomous_transaction,
 							 false,
-							 PGC_USERSET, 0,
+							 PGC_USERSET,
+							 GUC_NOT_IN_SAMPLE | GUC_NO_SHOW_ALL | GUC_NO_RESET_ALL,
 							 NULL, NULL, NULL);
 
 	DefineCustomStringVariable("plisql.extra_warnings",

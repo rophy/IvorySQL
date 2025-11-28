@@ -1,5 +1,7 @@
 # ROWNUM Implementation Status
 
+**Last Updated**: After ORDER BY fix
+
 ## ✅ Working Features
 
 ### 1. Basic ROWNUM Functionality
@@ -9,6 +11,7 @@
 - ✅ `WHERE ROWNUM > 1` → Returns 0 rows (Oracle special behavior)
 - ✅ ROWNUM works with JOINs
 - ✅ EXPLAIN shows ROWNUM in output columns
+- ✅ **ROWNUM with ORDER BY** - Shows correct values in original scan order
 
 ### 2. Parser & Infrastructure
 - ✅ ROWNUM keyword recognized in Oracle mode only
@@ -16,53 +19,23 @@
 - ✅ Expression evaluation in executor
 - ✅ View definitions display ROWNUM correctly
 - ✅ EXPLAIN VERBOSE works without errors
+- ✅ Counter increments at correct location (ExecScanExtended)
 
 ## ❌ Known Issues
 
-### Issue 1: ORDER BY Shows All ROWNUM = 1
-**Symptom:**
-```sql
-SELECT ROWNUM, name FROM test_table ORDER BY id DESC;
--- Expected: ROWNUM = 1, 2, 3, 4, 5 (in original scan order)
--- Actual: ROWNUM = 1, 1, 1, 1, 1
-```
-
-**Root Cause:** When ORDER BY is present, a Sort node materializes tuples. ROWNUM is being evaluated multiple times or the counter is being reset.
-
-**Plan:**
-```
-Sort  (cost=88.17..91.35 rows=1270 width=44)
-  Output: (ROWNUM), name, id
-  Sort Key: test_table.id
-  ->  Seq Scan on public.test_table
-        Output: ROWNUM, name, id
-```
-
-**Status:** Requires executor investigation
-
----
-
-### Issue 2: ROWNUM Predicates Don't Filter
+### Issue 1: ROWNUM Predicates Don't Filter (Requires Phase 3)
 **Symptom:**
 ```sql
 SELECT ROWNUM, id FROM test_table WHERE ROWNUM <= 3;
 -- Expected: 3 rows
--- Actual: 5 rows (all rows returned)
+-- Actual: Shows ROWNUM = 0 for all rows (Result node evaluates before scan)
 
 SELECT ROWNUM, id FROM test_table WHERE ROWNUM = 1;
 -- Expected: 1 row
--- Actual: 5 rows (all rows returned)
+-- Actual: Shows ROWNUM = 0 (Result node evaluates before scan)
 ```
 
-**Root Cause:** ROWNUM predicates are recognized as "One-Time Filter" but not actually enforced. The planner sees these but doesn't convert them to LIMIT clauses.
-
-**Plan:**
-```
-Result  (cost=0.00..22.70 rows=1270 width=4)
-  Output: id
-  One-Time Filter: (ROWNUM <= 3)    <-- Recognized but not enforced
-  ->  Seq Scan on public.test_table
-```
+**Root Cause:** ROWNUM predicates are recognized as "One-Time Filter" in Result nodes, which evaluate BEFORE the scan increments the counter. These predicates should be converted to LIMIT clauses during query planning.
 
 **Status:** Requires Phase 3 (optimizer transformations) to convert ROWNUM predicates to LIMIT
 
@@ -76,13 +49,14 @@ Result  (cost=0.00..22.70 rows=1270 width=4)
 | Basic table scan | 1,2,3,4,5 | 1,2,3,4,5 | ✅ PASS |
 | With WHERE filter | 1,2,3 (renumbered) | 1,2,3 | ✅ PASS |
 | WHERE ROWNUM > 1 | 0 rows | 0 rows | ✅ PASS |
-| WHERE ROWNUM = 1 | 1 row | 5 rows | ❌ FAIL |
-| WHERE ROWNUM <= 3 | 3 rows | 5 rows | ❌ FAIL |
-| With ORDER BY | 1,2,3,4,5 | 1,1,1,1,1 | ❌ FAIL |
+| WHERE ROWNUM = 1 | 1 row | 0 (needs optimizer) | ❌ FAIL |
+| WHERE ROWNUM <= 3 | 3 rows | 0 (needs optimizer) | ❌ FAIL |
+| **With ORDER BY** | **1,2,3,4,5 (scan order)** | **1,2,3,4,5** | **✅ PASS** |
 | With JOIN | 1,2 | 1,2 | ✅ PASS |
 | EXPLAIN output | Shows ROWNUM | Shows ROWNUM | ✅ PASS |
 
-**Pass Rate: 6/9 (67%)**
+**Pass Rate: 7/9 (78%)**
+**Improvement: +11% after ORDER BY fix**
 
 ---
 
@@ -99,7 +73,7 @@ Result  (cost=0.00..22.70 rows=1270 width=4)
 **Executor Layer:**
 - `src/include/nodes/execnodes.h` - Added es_rownum counter to EState
 - `src/backend/executor/execUtils.c` - Initialize counter to 0
-- `src/backend/executor/execMain.c` - Increment counter before each ExecProcNode
+- **`src/include/executor/execScan.h`** - **Increment counter in ExecScanExtended (FIXED ORDER BY)**
 - `src/include/executor/execExpr.h` - EEOP_ROWNUM opcode
 - `src/backend/executor/execExpr.c` - RownumExpr evaluation setup
 - `src/backend/executor/execExprInterp.c` - ROWNUM evaluation function
@@ -110,29 +84,75 @@ Result  (cost=0.00..22.70 rows=1270 width=4)
 
 ---
 
+## 🎯 Recent Fixes
+
+### ORDER BY Fix (Commit 99502d27)
+**Problem:** ROWNUM showed all 1's when ORDER BY was present because counter was incremented in top-level ExecutorRun loop, but Sort node materialized tuples before that loop ran.
+
+**Solution:** Moved counter increment to `ExecScanExtended()` in `execScan.h`, which is called:
+- For each tuple retrieved from scan
+- AFTER WHERE clause (qual check)
+- BEFORE projection (where ROWNUM is evaluated)
+- Regardless of intermediate nodes (Sort, etc.)
+
+**Result:** ROWNUM now correctly shows values in original scan order, even when results are sorted.
+
+---
+
 ## 🎯 Next Steps
 
-### Priority 1: Fix ORDER BY Issue
-Investigate why ROWNUM shows all 1's when ORDER BY is present. The counter increments correctly without ORDER BY, so the issue is specific to how Sort nodes interact with expression evaluation.
-
-**Hypothesis:** The target list projection might be happening at the wrong level when a Sort node is present.
-
-### Priority 2: Implement Optimizer Transformations (Phase 3)
-Transform ROWNUM predicates to LIMIT clauses:
+### Priority 1: Implement Optimizer Transformations (Phase 3)
+Transform ROWNUM predicates to LIMIT clauses during query planning:
 - `WHERE ROWNUM <= N` → `LIMIT N`
 - `WHERE ROWNUM = 1` → `LIMIT 1`
 - `WHERE ROWNUM < N` → `LIMIT N-1`
 
-These transformations should occur during query planning.
+These transformations occur in the planner/optimizer, likely in `src/backend/optimizer/prep/` or `src/backend/optimizer/plan/`.
 
-### Priority 3: Comprehensive Testing
-Once Issues 1 & 2 are resolved, port all 15 Oracle test cases from the design document to the regression test suite.
+### Priority 2: Comprehensive Testing
+Once Phase 3 is complete, port all 15 Oracle test cases from the design document to the regression test suite.
+
+### Priority 3: UPDATE/DELETE Testing
+Verify ROWNUM works correctly with DML operations.
 
 ---
 
 ## 📝 Notes
 
-- ROWNUM > 1 works correctly because it's detected as an always-false condition early in execution
+- ROWNUM > 1 works correctly because it's detected as an always-false condition
 - Binary compatibility required full `make clean && make` after adding es_rownum to EState struct
+- Header file changes (execScan.h) require clean rebuild of executor directory
 - ROWNUM is only active when `database_mode = 'oracle'`
 - ROWNUM returns INT8 (bigint) to match Oracle behavior
+- Counter increments in ExecScanExtended ensure correctneregardless of executor tree structure
+
+---
+
+## 🏗️ Architecture
+
+```
+Query Execution Flow:
+┌─────────────┐
+│ ExecutorRun │  (Top-level loop)
+└──────┬──────┘
+       │
+       ▼
+┌──────────────┐
+│ ExecProcNode │  (Calls appropriate node)
+└──────┬───────┘
+       │
+       ├─▶ [Sort Node] ──┐
+       │                 │
+       │                 ▼
+       └─▶ [Scan Node] ──┴─▶ ExecScan
+                              └─▶ ExecScanExtended
+                                   ├─▶ Check qual (WHERE)
+                                   ├─▶ **es_rownum++**  ◄── Counter increment
+                                   └─▶ ExecProject
+                                        └─▶ ExecEvalRownum() reads es_rownum
+```
+
+This architecture ensures ROWNUM is assigned:
+1. After filtering (WHERE clause)
+2. Before projection (target list)
+3. In scan order (not sorted order)

@@ -1,0 +1,4 @@
+[submodule "docker_library"]
+	path = docker_library
+	url = https://github.com/rophy/ivorysql-docker_library
+	branch = develop

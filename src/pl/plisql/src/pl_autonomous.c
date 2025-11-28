@@ -22,6 +22,7 @@
 #include "parser/parse_func.h"
 #include "parser/parse_type.h"
 #include "utils/builtins.h"
+#include "utils/datum.h"
 #include "utils/guc.h"
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
@@ -323,6 +324,7 @@ execute_autonomous_function(char *connstr, char *sql, Oid rettype, FunctionCallI
 	bool isnull;
 	int16 typlen;
 	bool typbyval;
+	MemoryContext oldcontext;
 
 	/* Look up dblink() function if not cached */
 	if (!OidIsValid(dblink_oid))
@@ -342,36 +344,63 @@ execute_autonomous_function(char *connstr, char *sql, Oid rettype, FunctionCallI
 					 quote_literal_cstr(sql),
 					 format_type_be(rettype));
 
-	/* Execute via SPI */
-	SPI_connect();
+	/* Execute via SPI with proper error handling */
+	PG_TRY();
+	{
+		/* Connect to SPI */
+		ret = SPI_connect();
+		if (ret < 0)
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("could not connect to SPI for autonomous function execution"),
+					 errdetail("SPI_connect returned %d", ret)));
 
-	ret = SPI_execute(query, true, 1);
-	if (ret != SPI_OK_SELECT)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("autonomous function execution failed"),
-				 errdetail("SPI_execute returned %d", ret)));
+		/* Execute the query */
+		ret = SPI_execute(query, true, 1);
+		if (ret != SPI_OK_SELECT)
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("autonomous function execution failed"),
+					 errdetail("SPI_execute returned %d", ret)));
 
-	if (SPI_processed != 1)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("autonomous function returned unexpected number of rows: %lu",
-						(unsigned long) SPI_processed)));
+		if (SPI_processed != 1)
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("autonomous function returned unexpected number of rows: %lu",
+							(unsigned long) SPI_processed)));
 
-	/* Extract return value from result */
-	result = SPI_getbinval(SPI_tuptable->vals[0],
-						  SPI_tuptable->tupdesc,
-						  1,
-						  &isnull);
+		/* Extract return value from result */
+		result = SPI_getbinval(SPI_tuptable->vals[0],
+							  SPI_tuptable->tupdesc,
+							  1,
+							  &isnull);
 
-	/* Get type information for datumCopy */
-	get_typlenbyval(rettype, &typlen, &typbyval);
+		/* Get type information for datumCopy */
+		get_typlenbyval(rettype, &typlen, &typbyval);
 
-	/* Copy result to upper context before SPI_finish frees SPI memory */
-	if (!isnull && !typbyval)
-		result = datumCopy(result, typbyval, typlen);
+		/*
+		 * Copy result to function's memory context before SPI_finish frees SPI memory.
+		 * For pass-by-reference types, switch to the caller's context to ensure the
+		 * copied data survives after SPI_finish().
+		 */
+		if (!isnull && !typbyval)
+		{
+			oldcontext = MemoryContextSwitchTo(fcinfo->flinfo->fn_mcxt);
+			result = datumCopy(result, typbyval, typlen);
+			MemoryContextSwitchTo(oldcontext);
+		}
 
-	SPI_finish();
+		SPI_finish();
+	}
+	PG_CATCH();
+	{
+		/* Clean up on error */
+		SPI_finish();
+		pfree(query);
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
+
 	pfree(query);
 
 	fcinfo->isnull = isnull;

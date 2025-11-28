@@ -296,6 +296,139 @@ CALL test_conditional_tx(81, false);
 */
 
 --
+-- Test 15: Error handling in autonomous function (triggers SPI error recovery)
+--
+CREATE OR REPLACE FUNCTION test_function_error() RETURN INT AS
+DECLARE
+    PRAGMA AUTONOMOUS_TRANSACTION;
+BEGIN
+    -- This will fail because nonexistent_table doesn't exist
+    -- Tests PG_CATCH cleanup (pfree and SPI_finish)
+    INSERT INTO nonexistent_table VALUES (999);
+    RETURN 1;
+END;
+/
+
+COMMIT;
+
+-- This should fail gracefully with proper error message
+-- \set ON_ERROR_STOP off
+SELECT test_function_error();
+-- \set ON_ERROR_STOP on
+
+--
+-- Test 16: Function with pass-by-reference return type
+-- Tests datumCopy() for complex types
+--
+CREATE OR REPLACE FUNCTION test_function_text(p_prefix TEXT) RETURN TEXT AS
+DECLARE
+    PRAGMA AUTONOMOUS_TRANSACTION;
+    v_result TEXT;
+BEGIN
+    v_result := p_prefix || ' - processed';
+    INSERT INTO autonomous_test VALUES (52, v_result, 'committed');
+    RETURN v_result;
+END;
+/
+
+COMMIT;
+
+SELECT test_function_text('test data') AS text_result;
+SELECT id, msg FROM autonomous_test WHERE id = 52;
+
+--
+-- Test 17: Nested autonomous function calls
+-- Tests multiple SPI contexts
+--
+CREATE OR REPLACE FUNCTION inner_function(p_value INT) RETURN INT AS
+DECLARE
+    PRAGMA AUTONOMOUS_TRANSACTION;
+BEGIN
+    INSERT INTO autonomous_test VALUES (p_value, 'inner function', 'committed');
+    RETURN p_value + 10;
+END;
+/
+
+CREATE OR REPLACE FUNCTION outer_function(p_value INT) RETURN INT AS
+DECLARE
+    PRAGMA AUTONOMOUS_TRANSACTION;
+    v_inner_result INT;
+BEGIN
+    INSERT INTO autonomous_test VALUES (p_value, 'outer function', 'committed');
+    v_inner_result := inner_function(p_value + 100);
+    RETURN v_inner_result + 5;
+END;
+/
+
+COMMIT;
+
+-- Should insert at id=60 (outer) and id=160 (inner), return 175 (160+10+5)
+SELECT outer_function(60) AS nested_result;
+SELECT id, msg FROM autonomous_test WHERE id IN (60, 160) ORDER BY id;
+
+--
+-- Test 18: Function returning NUMERIC (pass-by-reference, variable length)
+-- Tests datumCopy() with NUMERIC type
+--
+CREATE OR REPLACE FUNCTION test_function_numeric(p_amount NUMERIC) RETURN NUMERIC AS
+DECLARE
+    PRAGMA AUTONOMOUS_TRANSACTION;
+    v_result NUMERIC;
+BEGIN
+    v_result := p_amount * 1.15;  -- Add 15% tax
+    INSERT INTO autonomous_test VALUES (53, 'numeric: ' || v_result::TEXT, 'committed');
+    RETURN v_result;
+END;
+/
+
+COMMIT;
+
+SELECT test_function_numeric(100.50) AS numeric_result;
+SELECT id, msg FROM autonomous_test WHERE id = 53;
+
+--
+-- Test 19: Function returning DATE (pass-by-value)
+-- Tests date type handling
+--
+CREATE OR REPLACE FUNCTION test_function_date(p_days_offset INT) RETURN DATE AS
+DECLARE
+    PRAGMA AUTONOMOUS_TRANSACTION;
+    v_result DATE;
+BEGIN
+    v_result := CURRENT_DATE + p_days_offset;
+    INSERT INTO autonomous_test VALUES (54, 'date: ' || v_result::TEXT, 'committed');
+    RETURN v_result;
+END;
+/
+
+COMMIT;
+
+-- Returns date 7 days from now
+SELECT test_function_date(7) AS date_result;
+SELECT id, msg FROM autonomous_test WHERE id = 54;
+
+--
+-- Test 20: Function returning BOOLEAN (pass-by-value)
+-- Tests boolean type handling
+--
+CREATE OR REPLACE FUNCTION test_function_boolean(p_value INT) RETURN BOOLEAN AS
+DECLARE
+    PRAGMA AUTONOMOUS_TRANSACTION;
+    v_result BOOLEAN;
+BEGIN
+    v_result := (p_value > 50);
+    INSERT INTO autonomous_test VALUES (55, 'boolean: ' || v_result::TEXT, 'committed');
+    RETURN v_result;
+END;
+/
+
+COMMIT;
+
+SELECT test_function_boolean(75) AS bool_true_result;
+SELECT test_function_boolean(25) AS bool_false_result;
+SELECT id, msg FROM autonomous_test WHERE id = 55 ORDER BY id;
+
+--
 -- Summary: Show all test results
 --
 SELECT 'All autonomous transaction tests completed' AS status;
@@ -311,4 +444,11 @@ DROP PROCEDURE test_persist(INT);
 DROP PROCEDURE test_oid_invalidation(INT);
 DROP FUNCTION test_function_return(INT);
 DROP FUNCTION test_function_null();
+DROP FUNCTION test_function_error();
+DROP FUNCTION test_function_text(TEXT);
+DROP FUNCTION inner_function(INT);
+DROP FUNCTION outer_function(INT);
+DROP FUNCTION test_function_numeric(NUMERIC);
+DROP FUNCTION test_function_date(INT);
+DROP FUNCTION test_function_boolean(INT);
 DROP TABLE autonomous_test;

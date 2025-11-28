@@ -627,6 +627,7 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
  *   WHERE ROWNUM < N   ->  LIMIT N-1
  *
  * This must be done early in planning, before expression preprocessing.
+ * This function recursively processes subqueries in the range table.
  *--------------------
  */
 static void
@@ -643,12 +644,30 @@ transform_rownum_to_limit(Query *parse)
 	if (database_mode != DB_ORACLE)
 		return;
 
+	/*
+	 * First, recursively process any subqueries in the range table.
+	 * This ensures subqueries are transformed before the main query.
+	 */
+	foreach(lc, parse->rtable)
+	{
+		RangeTblEntry *rte = (RangeTblEntry *) lfirst(lc);
+
+		if (rte->rtekind == RTE_SUBQUERY && rte->subquery)
+		{
+			/* Recursively transform the subquery */
+			transform_rownum_to_limit(rte->subquery);
+		}
+	}
+
 	/* Already has LIMIT? Don't transform */
 	if (parse->limitCount != NULL)
 		return;
 
 	/* No WHERE clause? Nothing to do */
-	if (parse->jointree == NULL || parse->jointree->quals == NULL)
+	if (parse->jointree == NULL)
+		return;
+
+	if (parse->jointree->quals == NULL)
 		return;
 
 	jointree = parse->jointree;
@@ -870,6 +889,13 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 	root->join_domains = list_make1(makeNode(JoinDomain));
 
 	/*
+	 * Transform Oracle ROWNUM predicates to LIMIT clauses EARLY, before any
+	 * subquery processing. This ensures both the main query and any subqueries
+	 * get transformed.
+	 */
+	transform_rownum_to_limit(parse);
+
+	/*
 	 * If there is a WITH list, process each WITH query and either convert it
 	 * to RTE_SUBQUERY RTE(s) or build an initplan SubPlan structure for it.
 	 */
@@ -1014,12 +1040,6 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 	 * pullup, so that all base relations are present.
 	 */
 	preprocess_rowmarks(root);
-
-	/*
-	 * Transform Oracle ROWNUM predicates to LIMIT clauses.
-	 * This must be done before expression preprocessing.
-	 */
-	transform_rownum_to_limit(parse);
 
 	/*
 	 * Set hasHavingQual to remember if HAVING clause is present.  Needed

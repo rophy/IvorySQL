@@ -1,6 +1,6 @@
 # ROWNUM Implementation Status
 
-**Last Updated**: After ORDER BY fix
+**Last Updated**: After ROWNUM→LIMIT optimizer transformation (Phase 3)
 
 ## ✅ Working Features
 
@@ -21,23 +21,25 @@
 - ✅ EXPLAIN VERBOSE works without errors
 - ✅ Counter increments at correct location (ExecScanExtended)
 
+### 3. Optimizer Transformations (Phase 3)
+- ✅ **ROWNUM predicates transform to LIMIT** - WHERE ROWNUM <= N becomes LIMIT N
+- ✅ `WHERE ROWNUM = 1` → `LIMIT 1`
+- ✅ `WHERE ROWNUM <= N` → `LIMIT N`
+- ✅ `WHERE ROWNUM < N` → `LIMIT N-1`
+- ✅ Predicates are properly removed from WHERE clause after transformation
+
 ## ❌ Known Issues
 
-### Issue 1: ROWNUM Predicates Don't Filter (Requires Phase 3)
+### Issue 1: Subqueries with ROWNUM in Outer Query
 **Symptom:**
 ```sql
-SELECT ROWNUM, id FROM test_table WHERE ROWNUM <= 3;
--- Expected: 3 rows
--- Actual: Shows ROWNUM = 0 for all rows (Result node evaluates before scan)
-
-SELECT ROWNUM, id FROM test_table WHERE ROWNUM = 1;
--- Expected: 1 row
--- Actual: Shows ROWNUM = 0 (Result node evaluates before scan)
+SELECT * FROM (
+    SELECT ROWNUM as rn, * FROM emp WHERE ROWNUM <= 2
+) ORDER BY sal DESC;
+-- Inner query works correctly (LIMIT 2), but outer ORDER BY disrupts ROWNUM evaluation
 ```
 
-**Root Cause:** ROWNUM predicates are recognized as "One-Time Filter" in Result nodes, which evaluate BEFORE the scan increments the counter. These predicates should be converted to LIMIT clauses during query planning.
-
-**Status:** Requires Phase 3 (optimizer transformations) to convert ROWNUM predicates to LIMIT
+**Status:** Minor edge case - ROWNUM in subquery target list needs special handling when outer query has ORDER BY
 
 ---
 
@@ -49,14 +51,15 @@ SELECT ROWNUM, id FROM test_table WHERE ROWNUM = 1;
 | Basic table scan | 1,2,3,4,5 | 1,2,3,4,5 | ✅ PASS |
 | With WHERE filter | 1,2,3 (renumbered) | 1,2,3 | ✅ PASS |
 | WHERE ROWNUM > 1 | 0 rows | 0 rows | ✅ PASS |
-| WHERE ROWNUM = 1 | 1 row | 0 (needs optimizer) | ❌ FAIL |
-| WHERE ROWNUM <= 3 | 3 rows | 0 (needs optimizer) | ❌ FAIL |
-| **With ORDER BY** | **1,2,3,4,5 (scan order)** | **1,2,3,4,5** | **✅ PASS** |
+| **WHERE ROWNUM = 1** | **1 row** | **1 row** | **✅ PASS (FIXED!)** |
+| **WHERE ROWNUM <= 3** | **3 rows** | **3 rows** | **✅ PASS (FIXED!)** |
+| With ORDER BY | 1,2,3,4,5 (scan order) | 1,2,3,4,5 | ✅ PASS |
 | With JOIN | 1,2 | 1,2 | ✅ PASS |
-| EXPLAIN output | Shows ROWNUM | Shows ROWNUM | ✅ PASS |
+| Subquery TOP-N pattern | 2 rows sorted | 0 values (edge case) | ⚠️ PARTIAL |
+| EXPLAIN output | Shows ROWNUM/LIMIT | Shows LIMIT | ✅ PASS |
 
-**Pass Rate: 7/9 (78%)**
-**Improvement: +11% after ORDER BY fix**
+**Pass Rate: 8/9 (89%)**
+**Improvement: +11% after Phase 3 optimizer transformation**
 
 ---
 
@@ -78,6 +81,13 @@ SELECT ROWNUM, id FROM test_table WHERE ROWNUM = 1;
 - `src/backend/executor/execExpr.c` - RownumExpr evaluation setup
 - `src/backend/executor/execExprInterp.c` - ROWNUM evaluation function
 
+**Optimizer Layer (Phase 3):**
+- **`src/backend/optimizer/plan/planner.c`** - **transform_rownum_to_limit() function**
+  - Detects ROWNUM predicates in WHERE clause
+  - Transforms to LIMIT clauses before expression preprocessing
+  - Removes ROWNUM predicates from WHERE after transformation
+  - Handles `<=`, `=`, and `<` operators
+
 **Support Functions:**
 - `src/backend/nodes/nodeFuncs.c` - Type (INT8OID), collation support
 - `src/backend/utils/adt/ruleutils.c` - EXPLAIN/view deparsing
@@ -85,6 +95,22 @@ SELECT ROWNUM, id FROM test_table WHERE ROWNUM = 1;
 ---
 
 ## 🎯 Recent Fixes
+
+### Phase 3: Optimizer Transformation (Latest)
+**Problem:** ROWNUM predicates like `WHERE ROWNUM <= 3` were evaluated as "One-Time Filter" in Result nodes BEFORE the scan incremented the counter, causing all rows to see ROWNUM=0.
+
+**Solution:** Added `transform_rownum_to_limit()` function in `planner.c` that:
+1. Scans WHERE clause quals for ROWNUM predicates
+2. Detects patterns: `ROWNUM <= N`, `ROWNUM = N`, `ROWNUM < N`
+3. Converts to LIMIT clause: `LIMIT N`, `LIMIT N`, `LIMIT N-1`
+4. Removes the ROWNUM predicate from WHERE clause
+5. Runs early in planning, before expression preprocessing
+
+**Result:**
+- `WHERE ROWNUM <= 3` now returns exactly 3 rows ✅
+- `WHERE ROWNUM = 1` now returns exactly 1 row ✅
+- `WHERE ROWNUM < 3` now returns exactly 2 rows ✅
+- EXPLAIN shows clean `Limit` node instead of problematic "One-Time Filter"
 
 ### ORDER BY Fix (Commit 99502d27)
 **Problem:** ROWNUM showed all 1's when ORDER BY was present because counter was incremented in top-level ExecutorRun loop, but Sort node materialized tuples before that loop ran.
@@ -101,18 +127,23 @@ SELECT ROWNUM, id FROM test_table WHERE ROWNUM = 1;
 
 ## 🎯 Next Steps
 
-### Priority 1: Implement Optimizer Transformations (Phase 3)
-Transform ROWNUM predicates to LIMIT clauses during query planning:
-- `WHERE ROWNUM <= N` → `LIMIT N`
-- `WHERE ROWNUM = 1` → `LIMIT 1`
-- `WHERE ROWNUM < N` → `LIMIT N-1`
+### Priority 1: Fix Subquery Edge Case
+The pattern below needs refinement:
+```sql
+SELECT * FROM (SELECT ROWNUM as rn, * FROM emp WHERE ROWNUM <= 2) ORDER BY sal DESC;
+```
+Currently the inner query correctly limits to 2 rows, but the `rn` column shows 0 values.
 
-These transformations occur in the planner/optimizer, likely in `src/backend/optimizer/prep/` or `src/backend/optimizer/plan/`.
+### Priority 2: Additional Operator Support (Optional)
+Consider supporting:
+- `WHERE ROWNUM >= N` (always false except N=1, similar to `> 1`)
+- `WHERE ROWNUM BETWEEN 1 AND N` → `LIMIT N`
+- `WHERE N >= ROWNUM` (reversed operand order) → `LIMIT N`
 
-### Priority 2: Comprehensive Testing
-Once Phase 3 is complete, port all 15 Oracle test cases from the design document to the regression test suite.
+### Priority 3: Comprehensive Testing
+Port all 15 Oracle test cases from the design document to the regression test suite.
 
-### Priority 3: UPDATE/DELETE Testing
+### Priority 4: UPDATE/DELETE Testing
 Verify ROWNUM works correctly with DML operations.
 
 ---

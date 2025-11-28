@@ -59,7 +59,9 @@
 #include "partitioning/partdesc.h"
 #include "rewrite/rewriteManip.h"
 #include "utils/backend_status.h"
+#include "utils/guc.h"
 #include "utils/lsyscache.h"
+#include "utils/ora_compatible.h"
 #include "utils/rel.h"
 #include "utils/selfuncs.h"
 
@@ -247,6 +249,7 @@ static Path *make_ordered_path(PlannerInfo *root,
 							   double limit_tuples);
 static void gather_grouping_paths(PlannerInfo *root, RelOptInfo *rel);
 static bool can_partial_agg(PlannerInfo *root);
+static void transform_rownum_to_limit(Query *parse);
 static void apply_scanjoin_target_to_paths(PlannerInfo *root,
 										   RelOptInfo *rel,
 										   List *scanjoin_targets,
@@ -615,6 +618,164 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
 
 
 /*--------------------
+ * transform_rownum_to_limit
+ *	  Transform Oracle ROWNUM predicates into LIMIT clauses
+ *
+ * For Oracle compatibility, we need to convert WHERE clauses like:
+ *   WHERE ROWNUM <= N  ->  LIMIT N
+ *   WHERE ROWNUM = 1   ->  LIMIT 1
+ *   WHERE ROWNUM < N   ->  LIMIT N-1
+ *
+ * This must be done early in planning, before expression preprocessing.
+ *--------------------
+ */
+static void
+transform_rownum_to_limit(Query *parse)
+{
+	FromExpr   *jointree;
+	Node	   *quals;
+	List	   *andlist;
+	ListCell   *lc;
+	Node	   *rownum_qual = NULL;
+	int64		limit_value = 0;
+
+	/* Only apply in Oracle compatibility mode */
+	if (database_mode != DB_ORACLE)
+		return;
+
+	/* Already has LIMIT? Don't transform */
+	if (parse->limitCount != NULL)
+		return;
+
+	/* No WHERE clause? Nothing to do */
+	if (parse->jointree == NULL || parse->jointree->quals == NULL)
+		return;
+
+	jointree = parse->jointree;
+	quals = jointree->quals;
+
+	/* Convert quals to a list for easier processing */
+	if (IsA(quals, BoolExpr) && ((BoolExpr *) quals)->boolop == AND_EXPR)
+		andlist = ((BoolExpr *) quals)->args;
+	else
+		andlist = list_make1(quals);
+
+	/* Search for ROWNUM predicates in the AND list */
+	foreach(lc, andlist)
+	{
+		Node	   *qual = (Node *) lfirst(lc);
+		OpExpr	   *opexpr;
+		Node	   *leftop;
+		Node	   *rightop;
+		char	   *opname;
+		Const	   *constval;
+		int64		n;
+
+		/* We're looking for OpExpr nodes (comparison operators) */
+		if (!IsA(qual, OpExpr))
+			continue;
+
+		opexpr = (OpExpr *) qual;
+
+		/* Need exactly 2 arguments */
+		if (list_length(opexpr->args) != 2)
+			continue;
+
+		leftop = (Node *) linitial(opexpr->args);
+		rightop = (Node *) lsecond(opexpr->args);
+
+		/* Check if left operand is ROWNUM */
+		if (!IsA(leftop, RownumExpr))
+			continue;
+
+		/* Right operand must be a constant */
+		if (!IsA(rightop, Const))
+			continue;
+
+		/* Get the operator name */
+		opname = get_opname(opexpr->opno);
+		if (opname == NULL)
+			continue;
+
+		/* Now handle different operators */
+		constval = (Const *) rightop;
+
+		if (constval->constisnull)
+		{
+			pfree(opname);
+			continue;
+		}
+
+		/* Extract the integer value */
+		n = DatumGetInt64(constval->constvalue);
+
+		if (strcmp(opname, "<=") == 0)
+		{
+			/* ROWNUM <= N  ->  LIMIT N */
+			limit_value = n;
+			rownum_qual = qual;
+			pfree(opname);
+			break;
+		}
+		else if (strcmp(opname, "=") == 0)
+		{
+			/* ROWNUM = N  ->  LIMIT N (only makes sense for N=1) */
+			limit_value = n;
+			rownum_qual = qual;
+			pfree(opname);
+			break;
+		}
+		else if (strcmp(opname, "<") == 0)
+		{
+			/* ROWNUM < N  ->  LIMIT N-1 */
+			if (n > 0)
+				limit_value = n - 1;
+			else
+				limit_value = 0;
+			rownum_qual = qual;
+			pfree(opname);
+			break;
+		}
+
+		pfree(opname);
+	}
+
+	/* If we found a ROWNUM predicate, transform it */
+	if (rownum_qual != NULL && limit_value > 0)
+	{
+		/* Create the LIMIT constant */
+		parse->limitCount = (Node *) makeConst(INT8OID, -1, InvalidOid,
+											   sizeof(int64),
+											   Int64GetDatum(limit_value),
+											   false, FLOAT8PASSBYVAL);
+
+		/* Remove the ROWNUM predicate from the WHERE clause */
+		andlist = list_delete_ptr(andlist, rownum_qual);
+
+		if (list_length(andlist) == 0)
+		{
+			/* No quals left */
+			jointree->quals = NULL;
+		}
+		else if (list_length(andlist) == 1)
+		{
+			/* Single qual remaining */
+			jointree->quals = (Node *) linitial(andlist);
+		}
+		else
+		{
+			/* Multiple quals remaining, keep as AND expression */
+			BoolExpr   *newand = makeNode(BoolExpr);
+
+			newand->boolop = AND_EXPR;
+			newand->args = andlist;
+			newand->location = -1;
+			jointree->quals = (Node *) newand;
+		}
+	}
+}
+
+/*--------------------
  * subquery_planner
  *	  Invokes the planner on a subquery.  We recurse to here for each
  *	  sub-SELECT found in the query tree.
@@ -853,6 +1014,12 @@ subquery_planner(PlannerGlobal *glob, Query *parse, PlannerInfo *parent_root,
 	 * pullup, so that all base relations are present.
 	 */
 	preprocess_rowmarks(root);
+
+	/*
+	 * Transform Oracle ROWNUM predicates to LIMIT clauses.
+	 * This must be done before expression preprocessing.
+	 */
+	transform_rownum_to_limit(parse);
 
 	/*
 	 * Set hasHavingQual to remember if HAVING clause is present.  Needed

@@ -1710,6 +1710,15 @@ ExecutePlan(QueryDesc *queryDesc,
 		ResetPerTupleExprContext(estate);
 
 		/*
+		 * Increment ROWNUM counter for Oracle compatibility before executing the plan.
+		 * ROWNUM starts at 1 for the first row. The increment happens here so that
+		 * when the target list is evaluated (inside ExecProcNode), it sees the correct
+		 * row number. If ExecProcNode returns no tuple, we'll decrement it below.
+		 */
+		if (estate)
+			estate->es_rownum++;
+
+		/*
 		 * Execute the plan and obtain a tuple
 		 */
 		slot = ExecProcNode(planstate);
@@ -1719,7 +1728,12 @@ ExecutePlan(QueryDesc *queryDesc,
 		 * process so we just end the loop...
 		 */
 		if (TupIsNull(slot))
+		{
+			/* No tuple returned, decrement the counter we optimistically incremented */
+			if (estate)
+				estate->es_rownum--;
 			break;
+		}
 
 		/*
 		 * If we have a junk filter, then project a new tuple with the junk

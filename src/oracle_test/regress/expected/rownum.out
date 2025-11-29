@@ -175,17 +175,43 @@ SELECT * FROM (
 --
 -- Edge cases and non-optimizable patterns
 --
--- ROWNUM > N (not optimizable to LIMIT, returns empty)
+-- ROWNUM > 0 (tautology, returns all rows - Oracle semantics)
+SELECT COUNT(*) FROM rownum_test WHERE ROWNUM > 0;
+ count 
+-------
+    10
+(1 row)
+
+-- ROWNUM >= 1 (tautology, returns all rows - Oracle semantics)
+SELECT COUNT(*) FROM rownum_test WHERE ROWNUM >= 1;
+ count 
+-------
+    10
+(1 row)
+
+-- ROWNUM > N where N >= 1 (returns empty - Oracle semantics)
 SELECT id, name FROM rownum_test WHERE ROWNUM > 5;
  id | name 
 ----+------
 (0 rows)
 
--- ROWNUM >= 2 (not optimizable, returns empty)
+SELECT COUNT(*) FROM rownum_test WHERE ROWNUM > 1;
+ count 
+-------
+     0
+(1 row)
+
+-- ROWNUM >= N where N > 1 (returns empty - Oracle semantics)
 SELECT id, name FROM rownum_test WHERE ROWNUM >= 2;
  id | name 
 ----+------
 (0 rows)
+
+SELECT COUNT(*) FROM rownum_test WHERE ROWNUM >= 2;
+ count 
+-------
+     0
+(1 row)
 
 -- ROWNUM = 0 (always false)
 SELECT id, name FROM rownum_test WHERE ROWNUM = 0;
@@ -352,7 +378,23 @@ SELECT * FROM (
          ->  Seq Scan on rownum_test
 (4 rows)
 
--- Non-optimizable pattern (no Limit)
+-- ROWNUM > 0 (tautology, should remove qual entirely)
+EXPLAIN (COSTS OFF) SELECT COUNT(*) FROM rownum_test WHERE ROWNUM > 0;
+          QUERY PLAN           
+-------------------------------
+ Aggregate
+   ->  Seq Scan on rownum_test
+(2 rows)
+
+-- ROWNUM >= 1 (tautology, should remove qual entirely)
+EXPLAIN (COSTS OFF) SELECT COUNT(*) FROM rownum_test WHERE ROWNUM >= 1;
+          QUERY PLAN           
+-------------------------------
+ Aggregate
+   ->  Seq Scan on rownum_test
+(2 rows)
+
+-- ROWNUM > 5 (should show One-Time Filter: false)
 EXPLAIN (COSTS OFF) SELECT id, name FROM rownum_test WHERE ROWNUM > 5;
         QUERY PLAN        
 --------------------------
@@ -360,7 +402,24 @@ EXPLAIN (COSTS OFF) SELECT id, name FROM rownum_test WHERE ROWNUM > 5;
    One-Time Filter: false
 (2 rows)
 
--- ROWNUM = 2 should NOT be optimized to LIMIT (keep ROWNUM in WHERE)
+-- ROWNUM > 1 with aggregation (should show One-Time Filter: false)
+EXPLAIN (COSTS OFF) SELECT COUNT(*) FROM rownum_test WHERE ROWNUM > 1;
+           QUERY PLAN           
+--------------------------------
+ Aggregate
+   ->  Result
+         One-Time Filter: false
+(3 rows)
+
+-- ROWNUM >= 2 (should show One-Time Filter: false)
+EXPLAIN (COSTS OFF) SELECT id, name FROM rownum_test WHERE ROWNUM >= 2;
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
+(2 rows)
+
+-- ROWNUM = 2 should NOT be optimized to LIMIT (should show One-Time Filter: false)
 EXPLAIN (COSTS OFF) SELECT id, name FROM rownum_test WHERE ROWNUM = 2;
         QUERY PLAN        
 --------------------------

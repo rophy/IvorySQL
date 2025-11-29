@@ -116,11 +116,19 @@ SELECT * FROM (
 -- Edge cases and non-optimizable patterns
 --
 
--- ROWNUM > N (not optimizable to LIMIT, returns empty)
-SELECT id, name FROM rownum_test WHERE ROWNUM > 5;
+-- ROWNUM > 0 (tautology, returns all rows - Oracle semantics)
+SELECT COUNT(*) FROM rownum_test WHERE ROWNUM > 0;
 
--- ROWNUM >= 2 (not optimizable, returns empty)
+-- ROWNUM >= 1 (tautology, returns all rows - Oracle semantics)
+SELECT COUNT(*) FROM rownum_test WHERE ROWNUM >= 1;
+
+-- ROWNUM > N where N >= 1 (returns empty - Oracle semantics)
+SELECT id, name FROM rownum_test WHERE ROWNUM > 5;
+SELECT COUNT(*) FROM rownum_test WHERE ROWNUM > 1;
+
+-- ROWNUM >= N where N > 1 (returns empty - Oracle semantics)
 SELECT id, name FROM rownum_test WHERE ROWNUM >= 2;
+SELECT COUNT(*) FROM rownum_test WHERE ROWNUM >= 2;
 
 -- ROWNUM = 0 (always false)
 SELECT id, name FROM rownum_test WHERE ROWNUM = 0;
@@ -208,10 +216,22 @@ SELECT * FROM (
     ORDER BY value DESC
 ) WHERE ROWNUM <= 3;
 
--- Non-optimizable pattern (no Limit)
+-- ROWNUM > 0 (tautology, should remove qual entirely)
+EXPLAIN (COSTS OFF) SELECT COUNT(*) FROM rownum_test WHERE ROWNUM > 0;
+
+-- ROWNUM >= 1 (tautology, should remove qual entirely)
+EXPLAIN (COSTS OFF) SELECT COUNT(*) FROM rownum_test WHERE ROWNUM >= 1;
+
+-- ROWNUM > 5 (should show One-Time Filter: false)
 EXPLAIN (COSTS OFF) SELECT id, name FROM rownum_test WHERE ROWNUM > 5;
 
--- ROWNUM = 2 should NOT be optimized to LIMIT (keep ROWNUM in WHERE)
+-- ROWNUM > 1 with aggregation (should show One-Time Filter: false)
+EXPLAIN (COSTS OFF) SELECT COUNT(*) FROM rownum_test WHERE ROWNUM > 1;
+
+-- ROWNUM >= 2 (should show One-Time Filter: false)
+EXPLAIN (COSTS OFF) SELECT id, name FROM rownum_test WHERE ROWNUM >= 2;
+
+-- ROWNUM = 2 should NOT be optimized to LIMIT (should show One-Time Filter: false)
 EXPLAIN (COSTS OFF) SELECT id, name FROM rownum_test WHERE ROWNUM = 2;
 
 -- Issue #12: These should NOT show Limit because of same-level operations

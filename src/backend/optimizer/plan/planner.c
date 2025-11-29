@@ -645,6 +645,7 @@ transform_rownum_to_limit(Query *parse)
 	ListCell   *lc;
 	Node	   *rownum_qual = NULL;
 	int64		limit_value = 0;
+	bool		can_use_limit;
 
 	/* Only apply in Oracle compatibility mode */
 	if (database_mode != DB_ORACLE)
@@ -669,26 +670,6 @@ transform_rownum_to_limit(Query *parse)
 	if (parse->limitCount != NULL)
 		return;
 
-	/*
-	 * Only transform ROWNUM to LIMIT for simple SELECT queries with no
-	 * higher-level relational processing. PostgreSQL applies LIMIT after
-	 * ORDER BY, DISTINCT, GROUP BY, aggregation, window functions, etc.,
-	 * while Oracle applies ROWNUM before these operations. Transforming
-	 * in the presence of these operations would change query semantics.
-	 *
-	 * See GitHub issue #12 for detailed examples of incorrect behavior.
-	 */
-	if (parse->groupClause != NIL ||
-		parse->groupingSets != NIL ||
-		parse->hasAggs ||
-		parse->distinctClause != NIL ||
-		parse->hasDistinctOn ||
-		parse->sortClause != NIL ||
-		parse->hasWindowFuncs ||
-		parse->setOperations != NULL ||
-		parse->hasTargetSRFs)
-		return;
-
 	/* No WHERE clause? Nothing to do */
 	if (parse->jointree == NULL)
 		return;
@@ -704,6 +685,29 @@ transform_rownum_to_limit(Query *parse)
 		andlist = ((BoolExpr *) quals)->args;
 	else
 		andlist = list_make1(quals);
+
+	/*
+	 * Determine if we can safely transform ROWNUM to LIMIT.
+	 * Only transform for simple SELECT queries with no higher-level
+	 * relational processing. PostgreSQL applies LIMIT after ORDER BY,
+	 * DISTINCT, GROUP BY, aggregation, window functions, etc., while
+	 * Oracle applies ROWNUM before these operations. Transforming in
+	 * the presence of these operations would change query semantics.
+	 *
+	 * However, Oracle special semantics (ROWNUM >, >=, = for non-1)
+	 * must ALWAYS be processed regardless of query complexity.
+	 *
+	 * See GitHub issue #12 for detailed examples of incorrect behavior.
+	 */
+	can_use_limit = !(parse->groupClause != NIL ||
+					  parse->groupingSets != NIL ||
+					  parse->hasAggs ||
+					  parse->distinctClause != NIL ||
+					  parse->hasDistinctOn ||
+					  parse->sortClause != NIL ||
+					  parse->hasWindowFuncs ||
+					  parse->setOperations != NULL ||
+					  parse->hasTargetSRFs);
 
 	/* Search for ROWNUM predicates in the AND list */
 	foreach(lc, andlist)
@@ -756,20 +760,22 @@ transform_rownum_to_limit(Query *parse)
 
 		if (strcmp(opname, "<=") == 0)
 		{
-			/* ROWNUM <= N  ->  LIMIT N */
-			limit_value = n;
-			rownum_qual = qual;
+			/* ROWNUM <= N  ->  LIMIT N (only for simple queries) */
+			if (can_use_limit)
+			{
+				limit_value = n;
+				rownum_qual = qual;
+			}
 			pfree(opname);
 			break;
 		}
 		else if (strcmp(opname, "=") == 0)
 		{
 			/*
-			 * ROWNUM = 1 can be optimized to LIMIT 1.
-			 * ROWNUM = N where N > 1 is always false (Oracle semantics).
-			 * ROWNUM = 0 or negative is also always false.
+			 * ROWNUM = 1 can be optimized to LIMIT 1 (only for simple queries).
+			 * ROWNUM = N where N != 1 is always false (Oracle semantics) - always process.
 			 */
-			if (n == 1)
+			if (n == 1 && can_use_limit)
 			{
 				limit_value = n;
 				rownum_qual = qual;
@@ -812,41 +818,42 @@ transform_rownum_to_limit(Query *parse)
 		}
 		else if (strcmp(opname, "<") == 0)
 		{
-			/* ROWNUM < N  ->  LIMIT N-1 */
-			if (n > 0)
-				limit_value = n - 1;
-			else
-				limit_value = 0;
-			rownum_qual = qual;
+			/* ROWNUM < N  ->  LIMIT N-1 (only for simple queries) */
+			if (can_use_limit)
+			{
+				if (n > 0)
+					limit_value = n - 1;
+				else
+					limit_value = 0;
+				rownum_qual = qual;
+			}
 			pfree(opname);
 			break;
 		}
 		else if (strcmp(opname, ">") == 0)
 		{
 			/*
-			 * ROWNUM > N is always false in Oracle semantics.
-			 * ROWNUM starts at 1, and if the first row doesn't pass the filter,
-			 * subsequent rows never get assigned ROWNUM values > 1.
-			 * Replace the qual with constant FALSE.
+			 * ROWNUM > N:
+			 *   N >= 1: always false
+			 *   N < 1: tautology, remove qual
 			 */
 			BoolExpr   *newand;
-			Const	   *falseconst;
 
-			falseconst = (Const *) makeBoolConst(false, false);
-
-			/* Replace this qual with FALSE in the AND list */
 			andlist = list_delete_ptr(andlist, qual);
-			andlist = lappend(andlist, falseconst);
 
-			/* Rebuild the WHERE clause */
+			if (n >= 1)
+			{
+				/* Always false - add FALSE constant */
+				Const *falseconst = (Const *) makeBoolConst(false, false);
+				andlist = lappend(andlist, falseconst);
+			}
+			/* else: tautology, just remove qual */
+
+			/* Rebuild WHERE clause */
 			if (list_length(andlist) == 0)
-			{
 				jointree->quals = NULL;
-			}
 			else if (list_length(andlist) == 1)
-			{
 				jointree->quals = (Node *) linitial(andlist);
-			}
 			else
 			{
 				newand = makeNode(BoolExpr);
@@ -862,44 +869,38 @@ transform_rownum_to_limit(Query *parse)
 		else if (strcmp(opname, ">=") == 0)
 		{
 			/*
-			 * ROWNUM >= N where N > 1 is always false (Oracle semantics).
-			 * ROWNUM >= 1 is always true, but we can just leave it as-is.
+			 * ROWNUM >= N:
+			 *   N > 1: always false
+			 *   N <= 1: tautology, remove qual
 			 */
+			BoolExpr   *newand;
+
+			andlist = list_delete_ptr(andlist, qual);
+
 			if (n > 1)
 			{
-				BoolExpr   *newand;
-				Const	   *falseconst;
-
-				falseconst = (Const *) makeBoolConst(false, false);
-
-				/* Replace this qual with FALSE in the AND list */
-				andlist = list_delete_ptr(andlist, qual);
+				/* Always false - add FALSE constant */
+				Const *falseconst = (Const *) makeBoolConst(false, false);
 				andlist = lappend(andlist, falseconst);
-
-				/* Rebuild the WHERE clause */
-				if (list_length(andlist) == 0)
-				{
-					jointree->quals = NULL;
-				}
-				else if (list_length(andlist) == 1)
-				{
-					jointree->quals = (Node *) linitial(andlist);
-				}
-				else
-				{
-					newand = makeNode(BoolExpr);
-					newand->boolop = AND_EXPR;
-					newand->args = andlist;
-					newand->location = -1;
-					jointree->quals = (Node *) newand;
-				}
-
-				pfree(opname);
-				return;
 			}
-			/* ROWNUM >= 1 is always true, but leave it for now */
+			/* else: tautology, just remove qual */
+
+			/* Rebuild WHERE clause */
+			if (list_length(andlist) == 0)
+				jointree->quals = NULL;
+			else if (list_length(andlist) == 1)
+				jointree->quals = (Node *) linitial(andlist);
+			else
+			{
+				newand = makeNode(BoolExpr);
+				newand->boolop = AND_EXPR;
+				newand->args = andlist;
+				newand->location = -1;
+				jointree->quals = (Node *) newand;
+			}
+
 			pfree(opname);
-			break;
+			return;
 		}
 
 		pfree(opname);

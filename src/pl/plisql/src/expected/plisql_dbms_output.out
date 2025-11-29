@@ -16,6 +16,11 @@ CALL dbms_output.put_line(NULL);
 CALL dbms_output.put('First part');
 CALL dbms_output.put(' second part');
 CALL dbms_output.new_line();
+-- Test PUT with NULL (should append nothing)
+CALL dbms_output.put('Before NULL');
+CALL dbms_output.put(NULL);
+CALL dbms_output.put(' - After NULL');
+CALL dbms_output.new_line();
 -- Test multiple PUT calls
 CALL dbms_output.put('Line');
 CALL dbms_output.put(' with');

@@ -307,19 +307,25 @@ ora_dbms_output_disable(PG_FUNCTION_ARGS)
  *
  * Output a line to the buffer (with newline).
  * If there's pending PUT text, append it first (Oracle behavior).
+ * Oracle behavior: NULL is treated as empty string.
  */
 Datum
 ora_dbms_output_put_line(PG_FUNCTION_ARGS)
 {
-	text	   *line_text;
 	char	   *line_str;
 
 	/* Silently discard if buffer not enabled (Oracle behavior) */
 	if (output_buffer == NULL || !output_buffer->enabled)
 		PG_RETURN_VOID();
 
-	line_text = PG_GETARG_TEXT_PP(0);
-	line_str = text_to_cstring(line_text);
+	/* Handle NULL argument - treat as empty string (Oracle behavior) */
+	if (PG_ARGISNULL(0))
+		line_str = "";
+	else
+	{
+		text	   *line_text = PG_GETARG_TEXT_PP(0);
+		line_str = text_to_cstring(line_text);
+	}
 
 	/* If there's pending PUT text, append it first (Oracle behavior) */
 	if (output_buffer->current_line->len > 0)
@@ -342,19 +348,25 @@ ora_dbms_output_put_line(PG_FUNCTION_ARGS)
  *
  * Output text without newline (accumulates in current_line).
  * Oracle behavior: not retrievable until NEW_LINE or PUT_LINE is called.
+ * Oracle behavior: NULL is treated as empty string (appends nothing).
  */
 Datum
 ora_dbms_output_put(PG_FUNCTION_ARGS)
 {
-	text	   *text_arg;
 	char	   *str;
 
 	/* Silently discard if buffer not enabled */
 	if (output_buffer == NULL || !output_buffer->enabled)
 		PG_RETURN_VOID();
 
-	text_arg = PG_GETARG_TEXT_PP(0);
-	str = text_to_cstring(text_arg);
+	/* Handle NULL argument - treat as empty string (Oracle behavior) */
+	if (PG_ARGISNULL(0))
+		str = "";
+	else
+	{
+		text	   *text_arg = PG_GETARG_TEXT_PP(0);
+		str = text_to_cstring(text_arg);
+	}
 
 	/* Accumulate in current_line without creating a line yet */
 	appendStringInfoString(output_buffer->current_line, str);

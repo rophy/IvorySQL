@@ -1456,4 +1456,9 @@ extern void plisql_recover_yylex_global_proper(void *yylex_data);
 extern int	plisql_yyparse(PLiSQL_stmt_block * *plisql_parse_result_p,
 						   yyscan_t yyscanner);
 
+/*
+ * Externs in pl_exec.c for exception context access
+ */
+extern PGDLLEXPORT const char *plisql_get_current_exception_context(void);
+
 #endif							/* PLISQL_H */

@@ -1384,3 +1384,23 @@ BEGIN
 END;
 $$ LANGUAGE plisql SECURITY INVOKER;
 /* End - SYS_CONTEXT */
+
+/***************************************************************
+ *
+ * DBMS_UTILITY package functions
+ *
+ ***************************************************************/
+
+-- Internal C function that transforms PostgreSQL context to Oracle format
+CREATE FUNCTION sys.ora_format_error_backtrace_internal(text)
+RETURNS VARCHAR2
+AS 'MODULE_PATHNAME','ora_format_error_backtrace_internal'
+LANGUAGE C
+STABLE;
+
+-- Oracle-compatible C function that automatically retrieves current exception context
+CREATE FUNCTION sys.ora_format_error_backtrace()
+RETURNS VARCHAR2
+AS 'MODULE_PATHNAME','ora_format_error_backtrace'
+LANGUAGE C
+STABLE;

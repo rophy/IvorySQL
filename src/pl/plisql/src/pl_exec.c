@@ -114,6 +114,14 @@ static SimpleEcontextStackEntry *simple_econtext_stack = NULL;
 static ResourceOwner shared_simple_eval_resowner = NULL;
 
 /*
+ * Session-level storage for the current exception context string.
+ * This is set when entering an exception handler and can be retrieved
+ * by DBMS_UTILITY.FORMAT_ERROR_BACKTRACE and similar functions.
+ * The memory is allocated in TopMemoryContext to survive across function calls.
+ */
+static char *plisql_current_exception_context = NULL;
+
+/*
  * Memory management within a plisql function generally works with three
  * contexts:
  *
@@ -2060,6 +2068,22 @@ exec_stmt_block(PLiSQL_execstate * estate, PLiSQL_stmt_block * block)
 					 */
 					estate->cur_error = edata;
 
+					/*
+					 * Store the exception context string in session-level storage
+					 * so that DBMS_UTILITY.FORMAT_ERROR_BACKTRACE and similar
+					 * functions can access it. This provides Oracle compatibility.
+					 */
+					if (plisql_current_exception_context)
+					{
+						pfree(plisql_current_exception_context);
+						plisql_current_exception_context = NULL;
+					}
+					if (edata->context)
+					{
+						plisql_current_exception_context =
+							MemoryContextStrdup(TopMemoryContext, edata->context);
+					}
+
 					estate->err_text = NULL;
 
 					rc = exec_stmts(estate, exception->action);
@@ -2074,6 +2098,16 @@ exec_stmt_block(PLiSQL_execstate * estate, PLiSQL_stmt_block * block)
 			 * some inner block's exception handler.
 			 */
 			estate->cur_error = save_cur_error;
+
+			/*
+			 * Clear the session-level exception context now that we've finished
+			 * handling the exception.
+			 */
+			if (plisql_current_exception_context)
+			{
+				pfree(plisql_current_exception_context);
+				plisql_current_exception_context = NULL;
+			}
 
 			/* If no match found, re-throw the error */
 			if (e == NULL)
@@ -9893,4 +9927,19 @@ plisql_anonymous_return_out_parameter(PLiSQL_execstate * estate, PLiSQL_function
 	estate->retistuple = true;
 
 	return;
+}
+
+/*
+ * plisql_get_current_exception_context
+ *
+ * Returns the current exception context string if we're in an exception handler,
+ * otherwise returns NULL. This is used by Oracle-compatible functions like
+ * DBMS_UTILITY.FORMAT_ERROR_BACKTRACE.
+ *
+ * The returned string is managed by PL/iSQL and should not be freed by the caller.
+ */
+const char *
+plisql_get_current_exception_context(void)
+{
+	return plisql_current_exception_context;
 }

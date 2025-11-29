@@ -1,0 +1,238 @@
+--
+-- Tests for DBMS_OUTPUT package
+--
+-- Note: Use Oracle data types (VARCHAR2, INTEGER) for OUT parameters in Oracle mode
+--
+
+-- Enable output with default buffer size
+CALL dbms_output.enable();
+
+-- Basic PUT_LINE tests
+CALL dbms_output.put_line('Hello, World!');
+CALL dbms_output.put_line('Testing DBMS_OUTPUT');
+
+-- Test with empty string
+CALL dbms_output.put_line('');
+
+-- Test with NULL (should output empty line)
+CALL dbms_output.put_line(NULL);
+
+-- Test PUT and NEW_LINE separately
+CALL dbms_output.put('First part');
+CALL dbms_output.put(' second part');
+CALL dbms_output.new_line();
+
+-- Test multiple PUT calls
+CALL dbms_output.put('Line');
+CALL dbms_output.put(' with');
+CALL dbms_output.put(' multiple');
+CALL dbms_output.put(' parts');
+CALL dbms_output.new_line();
+
+-- Test DISABLE and re-ENABLE
+CALL dbms_output.disable();
+CALL dbms_output.put_line('This should not appear when disabled');
+CALL dbms_output.enable();
+CALL dbms_output.put_line('This should appear after re-enable');
+
+-- Test within a procedure
+CREATE OR REPLACE PROCEDURE test_dbms_output_proc(p_count int)
+AS $$
+BEGIN
+    FOR i IN 1..p_count LOOP
+        dbms_output.put_line('Procedure output line ' || i);
+    END LOOP;
+END;
+$$ LANGUAGE plisql;
+/
+
+CALL dbms_output.enable();
+CALL test_dbms_output_proc(3);
+
+-- Test within a function
+CREATE OR REPLACE FUNCTION test_dbms_output_func(p_value int) RETURNS int
+AS $$
+BEGIN
+    dbms_output.put_line('Function called with value: ' || p_value);
+    dbms_output.put_line('Returning: ' || (p_value * 2));
+    RETURN p_value * 2;
+END;
+$$ LANGUAGE plisql;
+/
+
+CALL dbms_output.enable();
+SELECT test_dbms_output_func(5);
+
+-- Test with exception handling
+BEGIN
+    dbms_output.enable();
+    dbms_output.put_line('Before exception');
+    BEGIN
+        RAISE EXCEPTION 'Test exception';
+    EXCEPTION WHEN OTHERS THEN
+        dbms_output.put_line('Exception caught: ' || SQLERRM);
+    END;
+    dbms_output.put_line('After exception');
+END;
+/
+
+-- Test buffer size limits (minimum is 2000)
+CALL dbms_output.enable(1000);  -- Should fail
+
+CALL dbms_output.enable(2000);  -- Should succeed
+
+CALL dbms_output.enable(1000000);  -- Maximum
+
+-- Test with maximum buffer size
+CALL dbms_output.enable(1000001);  -- Should fail (over max)
+
+-- Test numeric and other data types
+DO $$
+DECLARE
+    num int := 42;
+    flt numeric := 3.14159;
+BEGIN
+    dbms_output.enable();
+    dbms_output.put_line('Integer: ' || num);
+    dbms_output.put_line('Float: ' || flt);
+    dbms_output.put_line('Boolean: ' || (1=1)::text);
+END;
+$$;
+
+-- Test special characters
+DO $$
+BEGIN
+    dbms_output.enable();
+    dbms_output.put_line('Tab:	here');
+    dbms_output.put_line('Quote: ''single'' "double"');
+    dbms_output.put_line('Backslash: \ and forward: /');
+END;
+$$;
+
+-- Test within nested blocks
+DO $$
+BEGIN
+    dbms_output.enable();
+    dbms_output.put_line('Outer block');
+    BEGIN
+        dbms_output.put_line('Inner block 1');
+        BEGIN
+            dbms_output.put_line('Inner block 2');
+        END;
+        dbms_output.put_line('Back to inner block 1');
+    END;
+    dbms_output.put_line('Back to outer block');
+END;
+$$;
+
+-- Test with loops
+DO $$
+BEGIN
+    dbms_output.enable();
+    FOR i IN 1..5 LOOP
+        dbms_output.put_line('Loop iteration: ' || i);
+    END LOOP;
+END;
+$$;
+
+-- Test ENABLE with NULL buffer size (should use default)
+CALL dbms_output.enable(NULL);
+CALL dbms_output.put_line('After enable with NULL');
+
+-- Test very long line (edge case)
+DO $$
+DECLARE
+    very_long text := repeat('A', 32767);  -- Maximum line length in Oracle
+BEGIN
+    dbms_output.enable(100000);
+    BEGIN
+        dbms_output.put_line(very_long);
+        RAISE NOTICE 'Successfully output very long line';
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE 'Error with very long line: %', SQLERRM;
+    END;
+END;
+$$;
+
+-- Test concatenation in PUT
+DO $$
+BEGIN
+    dbms_output.enable();
+    dbms_output.put('Part1' || ' ' || 'Part2');
+    dbms_output.new_line();
+END;
+$$;
+
+-- Test buffer overflow scenario
+BEGIN
+    dbms_output.enable(2000);  -- Small buffer
+    FOR i IN 1..100 LOOP
+        BEGIN
+            dbms_output.put_line('Buffer test line ' || i || ' with some extra text to fill the buffer');
+        EXCEPTION WHEN OTHERS THEN
+            RAISE NOTICE 'Buffer full at line %: %', i, SQLERRM;
+            EXIT;
+        END;
+    END LOOP;
+END;
+/
+
+-- Test PUT without NEW_LINE (partial line)
+DO $$
+BEGIN
+    dbms_output.enable();
+    dbms_output.put('Partial ');
+    dbms_output.put('line ');
+    dbms_output.put('here');
+    -- Line not completed yet
+    dbms_output.new_line();  -- Now complete it
+    dbms_output.put_line('Complete line');
+END;
+$$;
+
+-- Test ENABLE multiple times (should reset buffer)
+CALL dbms_output.enable();
+CALL dbms_output.put_line('First enable');
+CALL dbms_output.enable();  -- Re-enable should clear buffer
+CALL dbms_output.put_line('Second enable');
+
+-- Test disable clears buffer
+CALL dbms_output.enable();
+CALL dbms_output.put_line('Before final disable');
+CALL dbms_output.disable();
+
+-- Test GET_LINE (use Oracle types: VARCHAR2, INTEGER)
+DECLARE
+    line VARCHAR2;
+    status INTEGER;
+BEGIN
+    dbms_output.enable();
+    dbms_output.put_line('Test GET_LINE');
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Line: %, Status: %', line, status;
+    -- Try to get another line (should be empty)
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Empty line: %, Status: %', line, status;
+END;
+/
+
+-- Test GET_LINES (use Oracle types: VARCHAR2[], INTEGER)
+DECLARE
+    lines VARCHAR2[];
+    numlines INTEGER := 10;
+BEGIN
+    dbms_output.enable();
+    dbms_output.put_line('Line 1');
+    dbms_output.put_line('Line 2');
+    dbms_output.put_line('Line 3');
+    dbms_output.get_lines(lines, numlines);
+    RAISE NOTICE 'Retrieved % lines', numlines;
+    FOR i IN 1..numlines LOOP
+        RAISE NOTICE 'Line %: %', i, lines[i];
+    END LOOP;
+END;
+/
+
+-- Cleanup
+DROP PROCEDURE test_dbms_output_proc;
+DROP FUNCTION test_dbms_output_func;

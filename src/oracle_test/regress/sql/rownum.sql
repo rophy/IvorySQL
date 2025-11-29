@@ -157,6 +157,37 @@ GROUP BY dept_id
 ORDER BY dept_id;
 
 --
+-- Issue #12: ROWNUM with same-level ORDER BY, DISTINCT, GROUP BY, aggregation
+-- These should NOT be transformed to LIMIT because of semantic differences
+--
+
+-- Direct COUNT with ROWNUM (should count only first 5 rows, not all rows)
+SELECT COUNT(*) FROM rownum_test WHERE ROWNUM <= 5;
+
+-- Direct ORDER BY with ROWNUM (should pick first 5 rows, THEN sort them)
+-- NOT the same as "ORDER BY value LIMIT 5" which sorts all rows first
+SELECT id, name, value FROM rownum_test WHERE ROWNUM <= 5 ORDER BY value;
+
+-- Direct DISTINCT with ROWNUM (should DISTINCT over first 3 rows only)
+-- NOT the same as "SELECT DISTINCT ... LIMIT 3" which distincts all rows first
+CREATE TABLE rownum_distinct_test (category varchar(10));
+INSERT INTO rownum_distinct_test VALUES ('A'), ('A'), ('B'), ('B'), ('C'), ('C');
+SELECT DISTINCT category FROM rownum_distinct_test WHERE ROWNUM <= 3;
+DROP TABLE rownum_distinct_test;
+
+-- Direct GROUP BY with ROWNUM (should group only first 4 rows)
+-- NOT the same as "GROUP BY ... LIMIT N" which groups all rows first
+CREATE TABLE rownum_group_test (category varchar(10), amount int);
+INSERT INTO rownum_group_test VALUES
+    ('A', 10), ('A', 20), ('B', 30), ('B', 40), ('C', 50), ('C', 60);
+SELECT category, SUM(amount)
+FROM rownum_group_test
+WHERE ROWNUM <= 4
+GROUP BY category
+ORDER BY category;
+DROP TABLE rownum_group_test;
+
+--
 -- Verify optimizer transformation with EXPLAIN
 --
 
@@ -182,6 +213,16 @@ EXPLAIN (COSTS OFF) SELECT id, name FROM rownum_test WHERE ROWNUM > 5;
 
 -- ROWNUM = 2 should NOT be optimized to LIMIT (keep ROWNUM in WHERE)
 EXPLAIN (COSTS OFF) SELECT id, name FROM rownum_test WHERE ROWNUM = 2;
+
+-- Issue #12: These should NOT show Limit because of same-level operations
+-- Direct COUNT with ROWNUM (has aggregation, should not use LIMIT)
+EXPLAIN (COSTS OFF) SELECT COUNT(*) FROM rownum_test WHERE ROWNUM <= 5;
+
+-- Direct ORDER BY with ROWNUM (has ORDER BY, should not use LIMIT)
+EXPLAIN (COSTS OFF) SELECT id, name FROM rownum_test WHERE ROWNUM <= 5 ORDER BY value;
+
+-- Direct DISTINCT with ROWNUM (has DISTINCT, should not use LIMIT)
+EXPLAIN (COSTS OFF) SELECT DISTINCT dept_id FROM rownum_test WHERE ROWNUM <= 5;
 
 --
 -- ROWNUM with other clauses

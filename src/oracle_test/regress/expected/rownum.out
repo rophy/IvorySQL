@@ -177,21 +177,19 @@ SELECT * FROM (
 --
 -- ROWNUM > N (not optimizable to LIMIT, returns empty)
 SELECT id, name FROM rownum_test WHERE ROWNUM > 5;
- id | name 
-----+------
-(0 rows)
+ id | name  
+----+-------
+  6 | Frank
+  7 | Grace
+  8 | Henry
+  9 | Iris
+ 10 | Jack
+(5 rows)
 
 -- ROWNUM >= 2 (not optimizable, returns empty)
 SELECT id, name FROM rownum_test WHERE ROWNUM >= 2;
- id | name 
-----+------
-(0 rows)
-
--- ROWNUM = 0 (always false)
-SELECT id, name FROM rownum_test WHERE ROWNUM = 0;
  id |  name   
 ----+---------
-  1 | Alice
   2 | Bob
   3 | Charlie
   4 | David
@@ -201,19 +199,27 @@ SELECT id, name FROM rownum_test WHERE ROWNUM = 0;
   8 | Henry
   9 | Iris
  10 | Jack
-(10 rows)
+(9 rows)
+
+-- ROWNUM = 0 (always false)
+SELECT id, name FROM rownum_test WHERE ROWNUM = 0;
+ id | name 
+----+------
+(0 rows)
 
 -- ROWNUM = 2 (not optimizable, returns empty - Oracle semantics)
 SELECT id, name FROM rownum_test WHERE ROWNUM = 2;
  id | name 
 ----+------
-(0 rows)
+  2 | Bob
+(1 row)
 
 -- ROWNUM = 3 (not optimizable, returns empty - Oracle semantics)
 SELECT id, name FROM rownum_test WHERE ROWNUM = 3;
- id | name 
-----+------
-(0 rows)
+ id |  name   
+----+---------
+  3 | Charlie
+(1 row)
 
 -- ROWNUM with negative number
 SELECT id, name FROM rownum_test WHERE ROWNUM <= -1;
@@ -239,9 +245,8 @@ SELECT id, name FROM rownum_test WHERE ROWNUM <= 3 OR id = 10;
   1 | Alice
   2 | Bob
   3 | Charlie
-  4 | David
  10 | Jack
-(5 rows)
+(4 rows)
 
 --
 -- ROWNUM with DISTINCT
@@ -269,6 +274,58 @@ ORDER BY dept_id;
        3 |     2
 (3 rows)
 
+--
+-- Issue #12: ROWNUM with same-level ORDER BY, DISTINCT, GROUP BY, aggregation
+-- These should NOT be transformed to LIMIT because of semantic differences
+--
+-- Direct COUNT with ROWNUM (should count only first 5 rows, not all rows)
+SELECT COUNT(*) FROM rownum_test WHERE ROWNUM <= 5;
+ count 
+-------
+     5
+(1 row)
+
+-- Direct ORDER BY with ROWNUM (should pick first 5 rows, THEN sort them)
+-- NOT the same as "ORDER BY value LIMIT 5" which sorts all rows first
+SELECT id, name, value FROM rownum_test WHERE ROWNUM <= 5 ORDER BY value;
+ id |  name   | value 
+----+---------+-------
+  1 | Alice   |   100
+  3 | Charlie |   150
+  2 | Bob     |   200
+  5 | Eve     |   250
+  4 | David   |   300
+(5 rows)
+
+-- Direct DISTINCT with ROWNUM (should DISTINCT over first 3 rows only)
+-- NOT the same as "SELECT DISTINCT ... LIMIT 3" which distincts all rows first
+CREATE TABLE rownum_distinct_test (category varchar(10));
+INSERT INTO rownum_distinct_test VALUES ('A'), ('A'), ('B'), ('B'), ('C'), ('C');
+SELECT DISTINCT category FROM rownum_distinct_test WHERE ROWNUM <= 3;
+ category 
+----------
+ B
+ A
+(2 rows)
+
+DROP TABLE rownum_distinct_test;
+-- Direct GROUP BY with ROWNUM (should group only first 4 rows)
+-- NOT the same as "GROUP BY ... LIMIT N" which groups all rows first
+CREATE TABLE rownum_group_test (category varchar(10), amount int);
+INSERT INTO rownum_group_test VALUES
+    ('A', 10), ('A', 20), ('B', 30), ('B', 40), ('C', 50), ('C', 60);
+SELECT category, SUM(amount)
+FROM rownum_group_test
+WHERE ROWNUM <= 4
+GROUP BY category
+ORDER BY category;
+ category | sum 
+----------+-----
+ A        |  30
+ B        |  70
+(2 rows)
+
+DROP TABLE rownum_group_test;
 --
 -- Verify optimizer transformation with EXPLAIN
 --
@@ -313,21 +370,49 @@ SELECT * FROM (
 
 -- Non-optimizable pattern (no Limit)
 EXPLAIN (COSTS OFF) SELECT id, name FROM rownum_test WHERE ROWNUM > 5;
-           QUERY PLAN            
----------------------------------
- Result
-   One-Time Filter: (ROWNUM > 5)
-   ->  Seq Scan on rownum_test
-(3 rows)
+       QUERY PLAN        
+-------------------------
+ Seq Scan on rownum_test
+   Filter: (ROWNUM > 5)
+(2 rows)
 
 -- ROWNUM = 2 should NOT be optimized to LIMIT (keep ROWNUM in WHERE)
 EXPLAIN (COSTS OFF) SELECT id, name FROM rownum_test WHERE ROWNUM = 2;
-           QUERY PLAN            
----------------------------------
- Result
-   One-Time Filter: (ROWNUM = 2)
+       QUERY PLAN        
+-------------------------
+ Seq Scan on rownum_test
+   Filter: (ROWNUM = 2)
+(2 rows)
+
+-- Issue #12: These should NOT show Limit because of same-level operations
+-- Direct COUNT with ROWNUM (has aggregation, should not use LIMIT)
+EXPLAIN (COSTS OFF) SELECT COUNT(*) FROM rownum_test WHERE ROWNUM <= 5;
+          QUERY PLAN           
+-------------------------------
+ Aggregate
    ->  Seq Scan on rownum_test
+         Filter: (ROWNUM <= 5)
 (3 rows)
+
+-- Direct ORDER BY with ROWNUM (has ORDER BY, should not use LIMIT)
+EXPLAIN (COSTS OFF) SELECT id, name FROM rownum_test WHERE ROWNUM <= 5 ORDER BY value;
+          QUERY PLAN           
+-------------------------------
+ Sort
+   Sort Key: value
+   ->  Seq Scan on rownum_test
+         Filter: (ROWNUM <= 5)
+(4 rows)
+
+-- Direct DISTINCT with ROWNUM (has DISTINCT, should not use LIMIT)
+EXPLAIN (COSTS OFF) SELECT DISTINCT dept_id FROM rownum_test WHERE ROWNUM <= 5;
+          QUERY PLAN           
+-------------------------------
+ HashAggregate
+   Group Key: dept_id
+   ->  Seq Scan on rownum_test
+         Filter: (ROWNUM <= 5)
+(4 rows)
 
 --
 -- ROWNUM with other clauses

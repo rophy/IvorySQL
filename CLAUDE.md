@@ -38,18 +38,66 @@ This project is a work of [IvorySQL](https://github.com/IvorySQL/IvorySQL). Chan
    docker compose exec dev make -j\$(nproc)
    ```
 
-## Running Tests
+## Test Framework Overview
+
+IvorySQL uses **pg_regress** (PostgreSQL's regression test framework) with multiple test suites:
+
+### Test Suites
+
+1. **PostgreSQL Compatibility Tests** (`src/test/regress/`)
+   - **Runner**: `pg_regress`
+   - Tests standard PostgreSQL features
+
+2. **Oracle Compatibility Tests** (`src/oracle_test/regress/`)
+   - **Runner**: `ora_pg_regress`
+   - **Key tests**:
+     - `ora_plisql.sql` - PL/iSQL language tests
+     - `ora_package.sql` - Oracle package tests
+
+3. **PL/iSQL Language Tests** (`src/pl/plisql/src/`)
+   - Tests PL/iSQL procedural language internals
+   - **Examples**: `plisql_array`, `plisql_control`, `plisql_dbms_output`, etc.
+   - Command: `cd src/pl/plisql/src && make oracle-check`
+
+4. **Oracle Extension Tests** (`contrib/ivorysql_ora/`)
+   - Tests Oracle compatibility packages (DBMS_UTILITY, datatypes, functions)
+   - Test files: `sql/*.sql` and expected outputs in `expected/*.out`
+   - Tests defined in `ORA_REGRESS` variable in Makefile
+   - Command: `cd contrib/ivorysql_ora && make installcheck`
+
+### Test Pattern
+
+All tests follow the same pattern:
+1. SQL input files in `sql/` directory
+2. Expected outputs in `expected/` directory (`.out` files)
+3. Runner executes SQL and compares actual vs expected output
+
+### Running Tests
 
 ```bash
-# PostgreSQL tests (228 tests)
+# PostgreSQL tests
 docker compose exec dev make check
 
-# Oracle compatibility tests (234 tests)
+# Oracle compatibility tests
 docker compose exec dev make oracle-check
 
 # Both test suites
 docker compose exec dev make all-check
+
+# Specific contrib module (e.g., ivorysql_ora)
+docker compose exec dev bash -c "cd contrib/ivorysql_ora && make installcheck"
+
+# PL/iSQL language tests
+docker compose exec dev bash -c "cd src/pl/plisql/src && make oracle-check"
 ```
+
+### Adding New Tests
+
+**For Oracle packages (like DBMS_UTILITY):**
+1. Create `contrib/ivorysql_ora/sql/<testname>.sql`
+2. Create `contrib/ivorysql_ora/expected/<testname>.out`
+3. Add `<testname>` to `ORA_REGRESS` in `contrib/ivorysql_ora/Makefile`
+4. Run `make installcheck` to verify
 
 ## Manual Testing with Oracle Compatibility
 

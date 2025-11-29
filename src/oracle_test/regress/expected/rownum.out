@@ -203,6 +203,18 @@ SELECT id, name FROM rownum_test WHERE ROWNUM = 0;
  10 | Jack
 (10 rows)
 
+-- ROWNUM = 2 (not optimizable, returns empty - Oracle semantics)
+SELECT id, name FROM rownum_test WHERE ROWNUM = 2;
+ id | name 
+----+------
+(0 rows)
+
+-- ROWNUM = 3 (not optimizable, returns empty - Oracle semantics)
+SELECT id, name FROM rownum_test WHERE ROWNUM = 3;
+ id | name 
+----+------
+(0 rows)
+
 -- ROWNUM with negative number
 SELECT id, name FROM rownum_test WHERE ROWNUM <= -1;
  id | name 
@@ -305,6 +317,15 @@ EXPLAIN (COSTS OFF) SELECT id, name FROM rownum_test WHERE ROWNUM > 5;
 ---------------------------------
  Result
    One-Time Filter: (ROWNUM > 5)
+   ->  Seq Scan on rownum_test
+(3 rows)
+
+-- ROWNUM = 2 should NOT be optimized to LIMIT (keep ROWNUM in WHERE)
+EXPLAIN (COSTS OFF) SELECT id, name FROM rownum_test WHERE ROWNUM = 2;
+           QUERY PLAN            
+---------------------------------
+ Result
+   One-Time Filter: (ROWNUM = 2)
    ->  Seq Scan on rownum_test
 (3 rows)
 

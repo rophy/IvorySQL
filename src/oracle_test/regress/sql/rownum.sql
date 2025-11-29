@@ -125,6 +125,12 @@ SELECT id, name FROM rownum_test WHERE ROWNUM >= 2;
 -- ROWNUM = 0 (always false)
 SELECT id, name FROM rownum_test WHERE ROWNUM = 0;
 
+-- ROWNUM = 2 (not optimizable, returns empty - Oracle semantics)
+SELECT id, name FROM rownum_test WHERE ROWNUM = 2;
+
+-- ROWNUM = 3 (not optimizable, returns empty - Oracle semantics)
+SELECT id, name FROM rownum_test WHERE ROWNUM = 3;
+
 -- ROWNUM with negative number
 SELECT id, name FROM rownum_test WHERE ROWNUM <= -1;
 
@@ -173,6 +179,9 @@ SELECT * FROM (
 
 -- Non-optimizable pattern (no Limit)
 EXPLAIN (COSTS OFF) SELECT id, name FROM rownum_test WHERE ROWNUM > 5;
+
+-- ROWNUM = 2 should NOT be optimized to LIMIT (keep ROWNUM in WHERE)
+EXPLAIN (COSTS OFF) SELECT id, name FROM rownum_test WHERE ROWNUM = 2;
 
 --
 -- ROWNUM with other clauses

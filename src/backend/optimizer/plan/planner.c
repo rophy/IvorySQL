@@ -738,9 +738,16 @@ transform_rownum_to_limit(Query *parse)
 		}
 		else if (strcmp(opname, "=") == 0)
 		{
-			/* ROWNUM = N  ->  LIMIT N (only makes sense for N=1) */
-			limit_value = n;
-			rownum_qual = qual;
+			/*
+			 * ROWNUM = N can only be optimized for N=1.
+			 * For N>1, the predicate must remain in WHERE clause,
+			 * which will correctly return 0 rows (Oracle semantics).
+			 */
+			if (n == 1)
+			{
+				limit_value = n;
+				rownum_qual = qual;
+			}
 			pfree(opname);
 			break;
 		}

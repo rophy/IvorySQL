@@ -628,6 +628,12 @@ standard_planner(Query *parse, const char *query_string, int cursorOptions,
  *
  * This must be done early in planning, before expression preprocessing.
  * This function recursively processes subqueries in the range table.
+ *
+ * IMPORTANT: This optimization is only safe for simple SELECT queries.
+ * PostgreSQL's LIMIT is applied AFTER ORDER BY, DISTINCT, GROUP BY, and
+ * aggregation, while Oracle's ROWNUM is applied BEFORE these operations.
+ * Therefore, we only transform when there are no higher-level relational
+ * operations that would change semantics.
  *--------------------
  */
 static void
@@ -661,6 +667,26 @@ transform_rownum_to_limit(Query *parse)
 
 	/* Already has LIMIT? Don't transform */
 	if (parse->limitCount != NULL)
+		return;
+
+	/*
+	 * Only transform ROWNUM to LIMIT for simple SELECT queries with no
+	 * higher-level relational processing. PostgreSQL applies LIMIT after
+	 * ORDER BY, DISTINCT, GROUP BY, aggregation, window functions, etc.,
+	 * while Oracle applies ROWNUM before these operations. Transforming
+	 * in the presence of these operations would change query semantics.
+	 *
+	 * See GitHub issue #12 for detailed examples of incorrect behavior.
+	 */
+	if (parse->groupClause != NIL ||
+		parse->groupingSets != NIL ||
+		parse->hasAggs ||
+		parse->distinctClause != NIL ||
+		parse->hasDistinctOn ||
+		parse->sortClause != NIL ||
+		parse->hasWindowFuncs ||
+		parse->setOperations != NULL ||
+		parse->hasTargetSRFs)
 		return;
 
 	/* No WHERE clause? Nothing to do */

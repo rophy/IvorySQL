@@ -177,29 +177,15 @@ SELECT * FROM (
 --
 -- ROWNUM > N (not optimizable to LIMIT, returns empty)
 SELECT id, name FROM rownum_test WHERE ROWNUM > 5;
- id | name  
-----+-------
-  6 | Frank
-  7 | Grace
-  8 | Henry
-  9 | Iris
- 10 | Jack
-(5 rows)
+ id | name 
+----+------
+(0 rows)
 
 -- ROWNUM >= 2 (not optimizable, returns empty)
 SELECT id, name FROM rownum_test WHERE ROWNUM >= 2;
- id |  name   
-----+---------
-  2 | Bob
-  3 | Charlie
-  4 | David
-  5 | Eve
-  6 | Frank
-  7 | Grace
-  8 | Henry
-  9 | Iris
- 10 | Jack
-(9 rows)
+ id | name 
+----+------
+(0 rows)
 
 -- ROWNUM = 0 (always false)
 SELECT id, name FROM rownum_test WHERE ROWNUM = 0;
@@ -211,15 +197,13 @@ SELECT id, name FROM rownum_test WHERE ROWNUM = 0;
 SELECT id, name FROM rownum_test WHERE ROWNUM = 2;
  id | name 
 ----+------
-  2 | Bob
-(1 row)
+(0 rows)
 
 -- ROWNUM = 3 (not optimizable, returns empty - Oracle semantics)
 SELECT id, name FROM rownum_test WHERE ROWNUM = 3;
- id |  name   
-----+---------
-  3 | Charlie
-(1 row)
+ id | name 
+----+------
+(0 rows)
 
 -- ROWNUM with negative number
 SELECT id, name FROM rownum_test WHERE ROWNUM <= -1;
@@ -370,18 +354,18 @@ SELECT * FROM (
 
 -- Non-optimizable pattern (no Limit)
 EXPLAIN (COSTS OFF) SELECT id, name FROM rownum_test WHERE ROWNUM > 5;
-       QUERY PLAN        
--------------------------
- Seq Scan on rownum_test
-   Filter: (ROWNUM > 5)
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
 (2 rows)
 
 -- ROWNUM = 2 should NOT be optimized to LIMIT (keep ROWNUM in WHERE)
 EXPLAIN (COSTS OFF) SELECT id, name FROM rownum_test WHERE ROWNUM = 2;
-       QUERY PLAN        
--------------------------
- Seq Scan on rownum_test
-   Filter: (ROWNUM = 2)
+        QUERY PLAN        
+--------------------------
+ Result
+   One-Time Filter: false
 (2 rows)
 
 -- Issue #12: These should NOT show Limit because of same-level operations

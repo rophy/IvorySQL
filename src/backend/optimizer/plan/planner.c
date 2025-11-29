@@ -765,14 +765,47 @@ transform_rownum_to_limit(Query *parse)
 		else if (strcmp(opname, "=") == 0)
 		{
 			/*
-			 * ROWNUM = N can only be optimized for N=1.
-			 * For N>1, the predicate must remain in WHERE clause,
-			 * which will correctly return 0 rows (Oracle semantics).
+			 * ROWNUM = 1 can be optimized to LIMIT 1.
+			 * ROWNUM = N where N > 1 is always false (Oracle semantics).
+			 * ROWNUM = 0 or negative is also always false.
 			 */
 			if (n == 1)
 			{
 				limit_value = n;
 				rownum_qual = qual;
+			}
+			else if (n != 1)
+			{
+				/* ROWNUM = N where N != 1 is always false */
+				BoolExpr   *newand;
+				Const	   *falseconst;
+
+				falseconst = (Const *) makeBoolConst(false, false);
+
+				/* Replace this qual with FALSE in the AND list */
+				andlist = list_delete_ptr(andlist, qual);
+				andlist = lappend(andlist, falseconst);
+
+				/* Rebuild the WHERE clause */
+				if (list_length(andlist) == 0)
+				{
+					jointree->quals = NULL;
+				}
+				else if (list_length(andlist) == 1)
+				{
+					jointree->quals = (Node *) linitial(andlist);
+				}
+				else
+				{
+					newand = makeNode(BoolExpr);
+					newand->boolop = AND_EXPR;
+					newand->args = andlist;
+					newand->location = -1;
+					jointree->quals = (Node *) newand;
+				}
+
+				pfree(opname);
+				return;
 			}
 			pfree(opname);
 			break;
@@ -785,6 +818,86 @@ transform_rownum_to_limit(Query *parse)
 			else
 				limit_value = 0;
 			rownum_qual = qual;
+			pfree(opname);
+			break;
+		}
+		else if (strcmp(opname, ">") == 0)
+		{
+			/*
+			 * ROWNUM > N is always false in Oracle semantics.
+			 * ROWNUM starts at 1, and if the first row doesn't pass the filter,
+			 * subsequent rows never get assigned ROWNUM values > 1.
+			 * Replace the qual with constant FALSE.
+			 */
+			BoolExpr   *newand;
+			Const	   *falseconst;
+
+			falseconst = (Const *) makeBoolConst(false, false);
+
+			/* Replace this qual with FALSE in the AND list */
+			andlist = list_delete_ptr(andlist, qual);
+			andlist = lappend(andlist, falseconst);
+
+			/* Rebuild the WHERE clause */
+			if (list_length(andlist) == 0)
+			{
+				jointree->quals = NULL;
+			}
+			else if (list_length(andlist) == 1)
+			{
+				jointree->quals = (Node *) linitial(andlist);
+			}
+			else
+			{
+				newand = makeNode(BoolExpr);
+				newand->boolop = AND_EXPR;
+				newand->args = andlist;
+				newand->location = -1;
+				jointree->quals = (Node *) newand;
+			}
+
+			pfree(opname);
+			return;
+		}
+		else if (strcmp(opname, ">=") == 0)
+		{
+			/*
+			 * ROWNUM >= N where N > 1 is always false (Oracle semantics).
+			 * ROWNUM >= 1 is always true, but we can just leave it as-is.
+			 */
+			if (n > 1)
+			{
+				BoolExpr   *newand;
+				Const	   *falseconst;
+
+				falseconst = (Const *) makeBoolConst(false, false);
+
+				/* Replace this qual with FALSE in the AND list */
+				andlist = list_delete_ptr(andlist, qual);
+				andlist = lappend(andlist, falseconst);
+
+				/* Rebuild the WHERE clause */
+				if (list_length(andlist) == 0)
+				{
+					jointree->quals = NULL;
+				}
+				else if (list_length(andlist) == 1)
+				{
+					jointree->quals = (Node *) linitial(andlist);
+				}
+				else
+				{
+					newand = makeNode(BoolExpr);
+					newand->boolop = AND_EXPR;
+					newand->args = andlist;
+					newand->location = -1;
+					jointree->quals = (Node *) newand;
+				}
+
+				pfree(opname);
+				return;
+			}
+			/* ROWNUM >= 1 is always true, but leave it for now */
 			pfree(opname);
 			break;
 		}

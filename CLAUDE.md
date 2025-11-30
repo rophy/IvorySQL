@@ -21,6 +21,15 @@ This project is a work of [IvorySQL](https://github.com/IvorySQL/IvorySQL). Chan
 - Keep messages short (1-5 lines preferred)
 - Types: feat, fix, refactor, chore, docs, build, test
 
+## Git Branch Convention (IMPORTANT)
+
+- `master` should be based on upstream/master and match origin
+- `test/dev-container` is upstream/master plus docker-compose for dev-containers and CLAUDE.md
+- `test/*` should be based on `test/dev-container` plus commits for a single feature
+- `feat/*` should be based on upstream/master, plus commits cherry-picked from `test/*` for submitting pull requests to upstream
+
+When you want to test something and noticed you don't see containers, verify the active branch you're on.
+
 ## Quick Start
 
 1. **Start the development container**

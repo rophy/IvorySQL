@@ -1389,18 +1389,7 @@ $$ LANGUAGE plisql SECURITY INVOKER;
  *
  * DBMS_UTILITY package functions
  *
+ * Note: The actual DBMS_UTILITY package is created in the plisql extension
+ * and should be loaded separately after database initialization.
+ *
  ***************************************************************/
-
--- Internal C function that transforms PostgreSQL context to Oracle format
-CREATE FUNCTION sys.ora_format_error_backtrace_internal(text)
-RETURNS VARCHAR2
-AS 'MODULE_PATHNAME','ora_format_error_backtrace_internal'
-LANGUAGE C
-STABLE;
-
--- Oracle-compatible C function that automatically retrieves current exception context
-CREATE FUNCTION sys.ora_format_error_backtrace()
-RETURNS VARCHAR2
-AS 'MODULE_PATHNAME','ora_format_error_backtrace'
-LANGUAGE C
-STABLE;

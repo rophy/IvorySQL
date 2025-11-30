@@ -25,7 +25,6 @@ OBJS = \
 	src/builtin_functions/datetime_datatype_functions.o \
 	src/builtin_functions/numeric_datatype_functions.o \
 	src/builtin_functions/misc_functions.o \
-	src/builtin_functions/dbms_utility.o \
 	src/merge/ora_merge.o \
 	src/sysview/sysview_functions.o \
 	src/xml_functions/ora_xml_functions.o
@@ -66,7 +65,6 @@ ORA_REGRESS = \
 	ora_character_datatype_functions \
 	ora_datetime_datatype_functions \
 	ora_misc_functions \
-	dbms_utility \
 	ora_merge \
 	datatype_and_func_bugs \
 	ora_sysview \
@@ -74,9 +72,6 @@ ORA_REGRESS = \
 	ora_xml_functions
 
 SHLIB_LINK += -lxml2
-
-# Add plisql include path for dbms_utility.c
-PG_CPPFLAGS += -I$(top_srcdir)/src/pl/plisql/src
 
 ifdef USE_PGXS
 PG_CONFIG = pg_config

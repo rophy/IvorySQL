@@ -203,29 +203,51 @@ After detailed analysis, we chose **Architecture 2: PL/iSQL-based** for DBMS_UTI
 src/pl/plisql/src/
 ├── pl_dbms_utility.c           ← C implementation (needs plisql.h internals)
 ├── plisql.h                    ← Already has what we need
-├── plisql--1.0.sql             ← Add: CREATE FUNCTION + CREATE PACKAGE
+├── plisql--1.0.sql             ← CREATE FUNCTION for C wrapper only
 └── Makefile                    ← Add pl_dbms_utility.o to OBJS
+
+src/bin/initdb/initdb.c
+└── load_plisql()               ← CREATE PACKAGE statements (requires Oracle mode)
 ```
+
+**Why split between plisql--1.0.sql and initdb.c?**
+
+1. **plisql--1.0.sql** runs during `CREATE EXTENSION plisql` with PostgreSQL parser
+2. **CREATE PACKAGE** syntax requires Oracle mode (`compatible_mode=oracle`)
+3. During extension creation, the session is in PostgreSQL mode
+4. `initdb.c` can wrap SQL with `SET ivorysql.compatible_mode TO oracle`
 
 **plisql--1.0.sql additions:**
 ```sql
--- C function wrapper
+-- C function wrapper (works in PG mode)
 CREATE FUNCTION sys.ora_format_error_backtrace() RETURNS TEXT
   AS 'MODULE_PATHNAME', 'ora_format_error_backtrace'
   LANGUAGE C VOLATILE;
-
--- Oracle-compatible package
-CREATE OR REPLACE PACKAGE dbms_utility IS
-  FUNCTION FORMAT_ERROR_BACKTRACE RETURN TEXT;
-END dbms_utility;
-
-CREATE OR REPLACE PACKAGE BODY dbms_utility IS
-  FUNCTION FORMAT_ERROR_BACKTRACE RETURN TEXT IS
-  BEGIN
-    RETURN sys.ora_format_error_backtrace();
-  END;
-END dbms_utility;
 ```
+
+**initdb.c load_plisql() additions:**
+```c
+/* Create DBMS_UTILITY package (requires Oracle mode for CREATE PACKAGE syntax) */
+PG_CMD_PUTS("SET ivorysql.compatible_mode TO oracle;\n\n");
+
+PG_CMD_PUTS("CREATE OR REPLACE PACKAGE dbms_utility IS "
+            "FUNCTION FORMAT_ERROR_BACKTRACE RETURN TEXT; "
+            "END dbms_utility;\n\n");
+
+PG_CMD_PUTS("CREATE OR REPLACE PACKAGE BODY dbms_utility IS "
+            "FUNCTION FORMAT_ERROR_BACKTRACE RETURN TEXT IS "
+            "BEGIN "
+            "RETURN sys.ora_format_error_backtrace(); "
+            "END; "
+            "END dbms_utility;\n\n");
+
+PG_CMD_PUTS("SET ivorysql.compatible_mode TO pg;\n\n");
+```
+
+**Technical Notes:**
+- initdb sends raw SQL via pipe, so no "/" block terminators - use semicolons only
+- Package statements must be single-line (concatenated C strings)
+- Pattern follows existing `load_ivorysql_ora()` approach
 
 ### Benefits
 
@@ -255,15 +277,17 @@ Based on this decision:
 
 2. **Future Packages:** Follow the guidelines table above based on dependencies.
 
-## Next Steps
+## Implementation Status
 
 1. ✅ Document architecture decision (this document)
-2. ⏳ Refactor DBMS_UTILITY to new location
-3. ⏳ Update regression tests
-4. ⏳ Update CLAUDE.md with guidelines
+2. ✅ Implement C function in `src/pl/plisql/src/pl_dbms_utility.c`
+3. ✅ Register C function in `src/pl/plisql/src/plisql--1.0.sql`
+4. ✅ Create DBMS_UTILITY package in `src/bin/initdb/initdb.c`
+5. ✅ Add regression tests in `src/pl/plisql/src/sql/dbms_utility.sql`
+6. ✅ All 17 plisql oracle-check tests passing
 
 ---
 
-**Document Status:** Decision made
+**Document Status:** Implementation complete
 **Last Updated:** 2025-11-30
-**Authors:** Rophy Tsai, Claude
+**Authors:** Rophy Tsai

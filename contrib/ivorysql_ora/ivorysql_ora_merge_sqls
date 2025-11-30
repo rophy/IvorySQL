@@ -1,5 +1,4 @@
 src/datatype/datatype
 src/builtin_functions/builtin_functions
-src/builtin_functions/dbms_utility
 src/sysview/sysview
 src/xml_functions/xml_functions

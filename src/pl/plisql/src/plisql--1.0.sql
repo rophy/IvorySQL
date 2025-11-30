@@ -21,3 +21,17 @@
 ALTER LANGUAGE plisql OWNER TO @extowner@;
 
 COMMENT ON LANGUAGE plisql IS 'PL/iSQL procedural language';
+
+--
+-- DBMS_UTILITY Package
+--
+-- Oracle-compatible utility functions that require access to PL/iSQL internals.
+-- These are installed as part of the PL/iSQL language extension.
+--
+
+-- C function wrapper for FORMAT_ERROR_BACKTRACE
+CREATE FUNCTION sys.ora_format_error_backtrace() RETURNS TEXT
+  AS 'MODULE_PATHNAME', 'ora_format_error_backtrace'
+  LANGUAGE C VOLATILE STRICT;
+
+COMMENT ON FUNCTION sys.ora_format_error_backtrace() IS 'Internal function for DBMS_UTILITY.FORMAT_ERROR_BACKTRACE';

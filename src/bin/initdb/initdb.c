@@ -2092,6 +2092,22 @@ static void
 load_plisql(FILE *cmdfd)
 {
 	PG_CMD_PUTS("CREATE EXTENSION plisql;\n\n");
+
+	/* Create DBMS_UTILITY package (requires Oracle mode for CREATE PACKAGE syntax) */
+	PG_CMD_PUTS("SET ivorysql.compatible_mode TO oracle;\n\n");
+
+	PG_CMD_PUTS("CREATE OR REPLACE PACKAGE dbms_utility IS "
+				"FUNCTION FORMAT_ERROR_BACKTRACE RETURN TEXT; "
+				"END dbms_utility;\n\n");
+
+	PG_CMD_PUTS("CREATE OR REPLACE PACKAGE BODY dbms_utility IS "
+				"FUNCTION FORMAT_ERROR_BACKTRACE RETURN TEXT IS "
+				"BEGIN "
+				"RETURN sys.ora_format_error_backtrace(); "
+				"END; "
+				"END dbms_utility;\n\n");
+
+	PG_CMD_PUTS("SET ivorysql.compatible_mode TO pg;\n\n");
 }
 
 static void

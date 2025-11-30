@@ -1,110 +1,56 @@
-# IvorySQL Built-in Oracle Packages - Current State
+# IvorySQL Built-in Oracle Packages
 
 ## Summary
 
-As of November 2025, IvorySQL upstream **does NOT have any built-in Oracle DBMS packages**. DBMS_UTILITY is the **first** Oracle-compatible DBMS package being implemented.
+As of November 2025, IvorySQL upstream has **ZERO** built-in Oracle DBMS packages.
 
-## Research Findings
+**DBMS_UTILITY** is the **first** Oracle-compatible DBMS package implemented for IvorySQL.
 
-### Web Search Results
+## Current State
 
-**IvorySQL Documentation:**
-- Official docs at ivorysql.org mention **package syntax support** (CREATE PACKAGE, package spec/body)
-- Documentation shows **how to create custom packages** but does NOT list built-in DBMS packages
-- Blog post "Introduction to IvorySQL Packages" demonstrates user-defined packages only
-- No mention of DBMS_UTILITY, DBMS_RANDOM, or other Oracle built-in packages
+### Upstream IvorySQL
 
-**Orafce Extension:**
-- IvorySQL imports and enhances the **Orafce extension** for Oracle compatibility
-- Orafce provides: Oracle-compatible datatypes, functions, and conversion utilities
-- However, **current IvorySQL upstream does NOT include any DBMS packages from Orafce**
+IvorySQL provides:
+- ✅ Oracle package syntax (CREATE PACKAGE, package spec/body)
+- ✅ Oracle-compatible datatypes (VARCHAR2, NUMBER, DATE, etc.)
+- ✅ Oracle-compatible functions (NVL, DECODE, TO_CHAR, etc.)
+- ❌ No built-in DBMS packages
 
-### Git History Analysis
+### This Implementation
 
-**Upstream Master Branch:**
-```bash
-$ git ls-tree --name-only upstream/master contrib/ivorysql_ora/src/builtin_functions/
-builtin_functions--1.0.sql
-character_datatype_functions.c
-datetime_datatype_functions.c
-misc_functions.c
-numeric_datatype_functions.c
-```
-
-**No DBMS packages in upstream.**
-
-## Current Development Work
-
-### DBMS_UTILITY Package
-
-**Status:** In development (not merged upstream)
-
-**Location (current, to be refactored):**
-```
-contrib/ivorysql_ora/src/builtin_functions/
-├── dbms_utility.c          (C implementation)
-└── dbms_utility--1.0.sql   (SQL package wrapper)
-
-contrib/ivorysql_ora/sql/
-└── dbms_utility.sql        (regression tests)
-```
-
-**Functions Implemented:**
-1. `FORMAT_ERROR_BACKTRACE() RETURN TEXT` ✅
-
-**Functions Planned:**
-- `FORMAT_ERROR_STACK() RETURN TEXT`
-- `FORMAT_CALL_STACK() RETURN TEXT`
-- (More Oracle DBMS_UTILITY functions TBD)
-
-**Key Implementation Detail:**
-- Requires access to PL/iSQL exception context (`PLiSQL_execstate`)
-- Current implementation includes `plisql.h` from `src/pl/plisql/src/`
-- Creates **cross-module dependency** (to be resolved - see ARCHITECTURE.md)
+**DBMS_UTILITY** (first package):
+- Location: `src/pl/plisql/src/` (part of PL/iSQL extension)
+- Functions: FORMAT_ERROR_BACKTRACE ✅
+- Status: Implemented and tested
 
 ## Comparison with Oracle
 
-### Oracle Database 23c Built-in Packages
+Oracle Database provides 100+ built-in DBMS packages. Common ones:
 
-Oracle provides **hundreds** of built-in PL/SQL packages, including:
+| Package | Oracle | IvorySQL |
+|---------|--------|----------|
+| DBMS_OUTPUT | ✅ | ✅ (via plisql) |
+| DBMS_UTILITY | ✅ | 🚧 1 function |
+| DBMS_RANDOM | ✅ | ❌ |
+| DBMS_SQL | ✅ | ❌ |
+| DBMS_LOB | ✅ | ❌ |
+| DBMS_SCHEDULER | ✅ | ❌ |
 
-**Most Common DBMS Packages:**
-- DBMS_OUTPUT (messaging/debugging)
-- DBMS_RANDOM (random number generation)
-- DBMS_UTILITY (utility functions)
-- DBMS_SQL (dynamic SQL)
-- DBMS_LOB (large objects)
-- DBMS_SCHEDULER (job scheduling)
-- DBMS_METADATA (metadata extraction)
-- DBMS_CRYPTO (encryption/hashing)
-- And 100+ more...
+## Architecture Pattern
 
-**IvorySQL Status:**
-- 🚧 DBMS_UTILITY: 1/30+ functions implemented (~3%) - first package
-- ❌ All other packages: 0%
+DBMS_UTILITY establishes the pattern for future packages:
 
-## Implications for Architecture
-
-### DBMS_UTILITY as First Package
-
-Since DBMS_UTILITY is the **first** built-in DBMS package, the architectural decisions made here will set the pattern for future packages.
-
-### Design Issue Identified
-
-DBMS_UTILITY needs **PL/iSQL internals**, which initially created:
-- Cross-module dependency (`contrib` → `src/pl/plisql`)
-- Layering violation (extension accessing language private headers)
-
-**Resolution:** Move DBMS_UTILITY to `src/pl/plisql/src/` (see ARCHITECTURE.md for decision details).
+| Package Needs | Location |
+|--------------|----------|
+| PL/iSQL internals | `src/pl/plisql/src/` |
+| Oracle datatypes only | `contrib/ivorysql_ora/` |
+| Both | Split implementation |
 
 ## References
 
-- **IvorySQL Docs:** https://www.ivorysql.org/docs/compatibillity_features/package/
-- **Oracle DBMS_UTILITY:** https://docs.oracle.com/en/database/oracle/oracle-database/23/arpls/DBMS_UTILITY.html
-- **Orafce Project:** https://github.com/orafce/orafce
+- [Oracle DBMS_UTILITY](https://docs.oracle.com/en/database/oracle/oracle-database/23/arpls/DBMS_UTILITY.html)
+- [IvorySQL Packages](https://www.ivorysql.org/docs/compatibillity_features/package/)
 
 ---
 
-**Document Status:** Research complete, decision made
 **Last Updated:** 2025-11-30
-**Authors:** Rophy Tsai, Claude

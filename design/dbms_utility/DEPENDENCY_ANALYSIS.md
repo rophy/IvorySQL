@@ -2,309 +2,143 @@
 
 ## The Problem
 
-DBMS_UTILITY's `FORMAT_ERROR_BACKTRACE` function needs to access PL/iSQL's exception context, creating a cross-module dependency.
+DBMS_UTILITY's `FORMAT_ERROR_BACKTRACE` needs PL/iSQL exception context. This document analyzes the dependency problem and the chosen solution.
 
-## Current Implementation
+## Module Structure
 
-### Module Structure
-
-IvorySQL has two separate compilation units:
+IvorySQL has two independent modules:
 
 ```
 src/pl/plisql/src/          →  plisql.so (language runtime)
-contrib/ivorysql_ora/       →  ivorysql_ora.so (Oracle compatibility extension)
+contrib/ivorysql_ora/       →  ivorysql_ora.so (Oracle compatibility)
 ```
 
-These compile to **separate shared libraries** that are loaded independently.
+**Upstream design:** These modules have NO cross-dependencies.
 
-### Dependency Chain
+## The Challenge
 
 ```
 User SQL:
   DBMS_UTILITY.FORMAT_ERROR_BACKTRACE
 
-↓ Calls (via package body)
-
-C Function (in ivorysql_ora.so):
-  sys.ora_format_error_backtrace()
-
 ↓ Needs access to
 
-PL/iSQL Internals (in plisql.so):
-  PLiSQL_execstate->err_text
-  Error stack information
-  Exception context
+PL/iSQL Exception Context:
+  - Error message and context string
+  - Call stack information
+  - Only available inside exception handler
 ```
 
-### Current Implementation Files
+## Why Cross-Module Dependency Is Bad
 
-**contrib/ivorysql_ora/src/builtin_functions/dbms_utility.c:**
+If `ivorysql_ora.so` included `plisql.h`:
+
+1. **Layering Violation:** Extension depends on language internals
+2. **Encapsulation Break:** Internal structures exposed
+3. **Maintenance Burden:** Changes to PL/iSQL break extension
+4. **Binary Compatibility:** Version coupling between shared libraries
+
+## Solution: Keep It In PL/iSQL
+
+**Decision:** Implement DBMS_UTILITY entirely in `src/pl/plisql/src/`
+
+### Implementation Approach
+
+Instead of accessing `PLiSQL_execstate` directly from a C function, use session-level storage:
+
 ```c
-#include "postgres.h"
-#include "plisql.h"  // ← From src/pl/plisql/src/plisql.h
+// pl_exec.c - Session storage
+static char *plisql_current_exception_context = NULL;
 
-PG_FUNCTION_INFO_V1(ora_format_error_backtrace);
-
-Datum
-ora_format_error_backtrace(PG_FUNCTION_ARGS)
+// Store context when entering exception handler
+// (in exec_stmt_block, within PG_CATCH block)
+if (edata->context)
 {
-    // Needs access to:
-    PLiSQL_execstate *estate = ...;  // PL/iSQL execution state
-    char *err_text = estate->err_text;  // Exception context
-    // ...
+    plisql_current_exception_context =
+        MemoryContextStrdup(TopMemoryContext, edata->context);
+}
+
+// Public API for retrieval
+const char *
+plisql_get_current_exception_context(void)
+{
+    return plisql_current_exception_context;
 }
 ```
 
-**contrib/ivorysql_ora/Makefile (line 79):**
-```makefile
-# Include path for PL/iSQL headers (needed for DBMS_UTILITY.FORMAT_ERROR_BACKTRACE)
-PG_CPPFLAGS += -I$(top_srcdir)/src/pl/plisql/src
+### Why This Works
+
+1. **Exception handler stores context:** When PL/iSQL catches an exception, it saves the context string in session storage before user code runs.
+
+2. **C function retrieves via API:** The `ora_format_error_backtrace()` function calls `plisql_get_current_exception_context()` - a simple public API.
+
+3. **No direct struct access:** The C function doesn't need to know about `PLiSQL_execstate` internals.
+
+4. **Clean memory management:** Context stored in `TopMemoryContext`, cleared when exiting handler.
+
+### Data Flow
+
+```
+1. Exception occurs in PL/iSQL code
+   ↓
+2. PL/iSQL catches exception (PG_CATCH in exec_stmt_block)
+   ↓
+3. Context stored: plisql_current_exception_context = edata->context
+   ↓
+4. User's EXCEPTION block runs
+   ↓
+5. User calls DBMS_UTILITY.FORMAT_ERROR_BACKTRACE
+   ↓
+6. Package body calls sys.ora_format_error_backtrace()
+   ↓
+7. C function calls plisql_get_current_exception_context()
+   ↓
+8. Returns stored context string
+   ↓
+9. C function transforms to Oracle format
+   ↓
+10. Exception handler exits, context cleared
 ```
 
-## Why This Is Problematic
+## Alternatives Considered
 
-### 1. Layering Violation
+### Alternative: Public API in PL/iSQL (Not Chosen)
 
-```
-┌─────────────────────────────────┐
-│  User Code                      │
-└─────────────────┬───────────────┘
-                  │
-┌─────────────────▼───────────────┐
-│  contrib/ivorysql_ora           │  ← Extension layer
-│  (Oracle compatibility)         │
-└─────────────────┬───────────────┘
-                  │
-                  │ ❌ SHOULD NOT ACCESS INTERNALS
-                  │
-┌─────────────────▼───────────────┐
-│  src/pl/plisql/src              │  ← Language layer
-│  (PL/iSQL runtime internals)    │
-└─────────────────────────────────┘
-```
+Export exception context via SQL-callable function:
 
-**Principle:** Higher-level modules (extensions) should NOT depend on lower-level module internals.
-
-### 2. Encapsulation Break
-
-`plisql.h` contains **private implementation details**:
-- `PLiSQL_execstate` structure layout
-- Internal error handling mechanisms
-- Memory management details
-
-These are **not intended as a public API**. Changes to PL/iSQL internals will break `ivorysql_ora`.
-
-### 3. Maintenance Burden
-
-**Scenario:** PL/iSQL team refactors exception handling
 ```c
-// Before (in plisql.h)
-typedef struct PLiSQL_execstate {
-    char *err_text;
-} PLiSQL_execstate;
+// plisql.so exports:
+PG_FUNCTION_INFO_V1(plisql_get_exception_context);
 
-// After (refactored)
-typedef struct PLiSQL_execstate {
-    ErrorData *error_data;  // Changed!
-} PLiSQL_execstate;
+// ivorysql_ora.so calls:
+DirectFunctionCall0(plisql_get_exception_context);
 ```
 
-**Result:** `dbms_utility.c` breaks because it depends on internal structure.
+**Why not chosen:** More complex, still requires coordination between modules. Simpler to keep everything in one place.
 
-### 4. Binary Compatibility
+### Alternative: Use Core PostgreSQL Error System (Not Chosen)
 
-Two separate shared libraries (`plisql.so` and `ivorysql_ora.so`) must maintain **ABI compatibility**:
-- If `plisql.so` is upgraded, `ivorysql_ora.so` may break
-- Versioning becomes complex
-- Testing matrix increases (all combinations of versions)
+Access `ErrorData` from PostgreSQL's elog.c instead of PL/iSQL.
 
-## Dependency Patterns in PostgreSQL
+**Why not chosen:** The error context string with PL/iSQL procedure names and line numbers is only available through PL/iSQL's exception handling.
 
-### How PL/pgSQL Handles This
-
-PostgreSQL's PL/pgSQL **does NOT** expose internals to extensions. Instead:
-
-**Option 1: Public API Functions**
-```c
-// In src/pl/plpgsql/src/pl_funcs.c (exported)
-Datum plpgsql_get_error_info(PG_FUNCTION_ARGS) {
-    // Access internals safely
-    return internal_data;
-}
-```
-
-Extensions call public functions, not access internals directly.
-
-**Option 2: Callback Mechanism**
-```c
-// Language registers callbacks that extensions can use
-void register_error_callback(ErrorCallbackFunc func);
-```
-
-**Option 3: Shared State in Core**
-```c
-// In src/backend/utils/error/elog.c (core PostgreSQL)
-ErrorData *current_error_data;  // Accessible to all
-```
-
-All modules access shared state in core, not each other's internals.
-
-### What IvorySQL Should Do
-
-**Current (Bad):**
-```
-ivorysql_ora.so  →  #include "plisql.h"  →  Access internals directly
-```
-
-**Better (Good):**
-```
-ivorysql_ora.so  →  Call plisql_get_exception_context()  →  plisql.so handles internals
-```
-
-## Proposed Solutions
-
-### Solution 1: Move DBMS_UTILITY to PL/iSQL
-
-**Rationale:** If it needs PL/iSQL internals, it IS part of PL/iSQL.
+## Final Architecture
 
 ```
 src/pl/plisql/src/
-├── pl_dbms_utility.c       ← Native implementation (can access internals)
-├── plisql--1.0.sql         ← Export as sys.ora_format_error_backtrace()
-└── plisql.h                ← No need to expose, internal use only
-
-contrib/ivorysql_ora/
-└── dbms_utility--1.0.sql   ← CREATE PACKAGE wrapper (calls plisql functions)
+├── pl_exec.c               ← Exception context storage + API
+├── pl_dbms_utility.c       ← Format transformation
+├── plisql.h                ← API declaration
+└── plisql--1.0.sql         ← Package definition
 ```
 
-**Pros:**
+**Benefits:**
 - ✅ No cross-module dependency
-- ✅ Clean encapsulation
-- ✅ Natural architecture: "internal to language"
-
-**Cons:**
-- ❌ Splits DBMS packages across two locations
-- ❌ Makes DBMS_UTILITY part of core (harder to make optional)
-
-### Solution 2: Create Public API in PL/iSQL
-
-**Rationale:** PL/iSQL exports exception info through a stable API.
-
-```c
-// In src/pl/plisql/src/pl_public_api.c (NEW FILE)
-PG_FUNCTION_INFO_V1(plisql_get_exception_context);
-
-Datum plisql_get_exception_context(PG_FUNCTION_ARGS) {
-    // Access internal PLiSQL_execstate
-    // Return formatted error info
-    return error_context_string;
-}
-```
-
-```c
-// In contrib/ivorysql_ora/src/builtin_functions/dbms_utility.c
-// NO #include "plisql.h" needed!
-
-Datum ora_format_error_backtrace(PG_FUNCTION_ARGS) {
-    // Call public API
-    return DirectFunctionCall0(plisql_get_exception_context);
-}
-```
-
-**Pros:**
-- ✅ Keeps all DBMS packages in one location (contrib)
-- ✅ Stable API (internals can change without breaking extension)
-- ✅ Follows PostgreSQL patterns
-
-**Cons:**
-- ❌ More boilerplate (need public API layer)
-- ❌ PL/iSQL must maintain backward compatibility for API
-
-### Solution 3: Use Core PostgreSQL Error System
-
-**Rationale:** PostgreSQL core already tracks errors; use that instead.
-
-```c
-// In contrib/ivorysql_ora/src/builtin_functions/dbms_utility.c
-#include "utils/elog.h"  // Core PostgreSQL, not plisql.h
-
-Datum ora_format_error_backtrace(PG_FUNCTION_ARGS) {
-    ErrorData *edata = current_error_data;  // From core
-    // Format Oracle-style backtrace
-    return backtrace_string;
-}
-```
-
-**Pros:**
-- ✅ No dependency on PL/iSQL
-- ✅ Works with ANY procedural language (PL/Python, PL/Perl, etc.)
-- ✅ Most general solution
-
-**Cons:**
-- ❌ PostgreSQL's error context format differs from Oracle's
-- ❌ May not have PL/iSQL-specific details (procedure names, line numbers)
-- ❌ Requires translation layer
-
-## Recommendation
-
-**Use Solution 1 for now, plan for Solution 2 long-term:**
-
-1. **Short-term (current implementation):**
-   - Move `dbms_utility.c` to `src/pl/plisql/src/pl_dbms_utility.c`
-   - Keep SQL wrapper in `contrib/ivorysql_ora/`
-   - Clean dependency: no cross-module includes
-
-2. **Long-term (if more extensions need error context):**
-   - Extract public API: `src/pl/plisql/src/pl_public_api.c`
-   - Export stable functions for exception context
-   - Move `pl_dbms_utility.c` back to `contrib` using public API
-
-3. **Future consideration:**
-   - If many DBMS packages need PL/iSQL internals, they should ALL be in `src/pl/plisql/src/`
-   - If only DBMS_UTILITY needs it, keep it there as a special case
-
-## Comparison with Other Systems
-
-### Oracle
-
-Oracle's DBMS packages are **part of the database core**, not extensions:
-- Built into the database binary
-- No separation between "language" and "packages"
-- Tightly integrated with PL/SQL runtime
-
-### EDB Postgres Advanced Server (EPAS)
-
-EPAS implements Oracle compatibility as **built-in features**:
-- Not separate extensions
-- DBMS packages compiled into server
-- Similar to Solution 1 (part of core)
-
-### Orafce (PostgreSQL Extension)
-
-Orafce implements Oracle compatibility as a **pure extension**:
-- Does NOT access PL/pgSQL internals
-- Reimplements functionality using PostgreSQL public APIs
-- Similar to Solution 3 (use core APIs only)
-
-## Decision Criteria
-
-**Choose Solution 1 if:**
-- Tight coupling to PL/iSQL is acceptable
-- We want native Oracle behavior (exact error formats)
-- We're okay with DBMS packages as "part of the language"
-
-**Choose Solution 2 if:**
-- We want clean separation of concerns
-- We expect many extensions to need error context
-- We value modularity and independent versioning
-
-**Choose Solution 3 if:**
-- We want maximum portability
-- We're okay with "Oracle-like" instead of "exact Oracle"
-- We want DBMS packages to work with any procedural language
+- ✅ Self-contained in PL/iSQL
+- ✅ Clean public API (`plisql_get_current_exception_context`)
+- ✅ Respects upstream module boundaries
 
 ---
 
-**Document Status:** Analysis complete, decision pending
+**Status:** Implemented
 **Last Updated:** 2025-11-30
-**Authors:** Rophy Tsai, Claude

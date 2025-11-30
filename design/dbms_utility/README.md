@@ -1,94 +1,58 @@
 # DBMS_UTILITY Design Documentation
 
-This directory contains design documentation and architectural discussions for implementing Oracle-compatible DBMS packages in IvorySQL.
+Design documentation for IvorySQL's first Oracle-compatible DBMS package.
 
-## Decision Summary
+## Implementation Summary
 
-**Decision:** Put DBMS_UTILITY entirely in `src/pl/plisql/src/`
+**DBMS_UTILITY** is implemented in `src/pl/plisql/src/` as part of the PL/iSQL extension.
 
 ```
 src/pl/plisql/src/
-├── pl_dbms_utility.c           ← C implementation
-├── plisql--1.0.sql             ← CREATE FUNCTION + CREATE PACKAGE
-└── Makefile                    ← Add pl_dbms_utility.o to OBJS
+├── pl_dbms_utility.c           ← C implementation (format transformation)
+├── pl_exec.c                   ← Session-level exception context storage
+├── plisql.h                    ← API export declaration
+├── plisql--1.0.sql             ← Package definition
+├── sql/dbms_utility.sql        ← Regression tests
+└── expected/dbms_utility.out   ← Expected test output
 ```
 
-**Rationale:**
-- DBMS_UTILITY needs PL/iSQL internals (exception context)
-- Upstream IvorySQL has `plisql` and `ivorysql_ora` as independent modules
-- Putting it in `plisql` avoids introducing cross-module dependencies
-- `plisql--1.0.sql` runs at `CREATE EXTENSION plisql` time, when the language is available
-- DBMS_UTILITY doesn't need Oracle types, so no dependency on `ivorysql_ora`
+**Current Functions:**
+- `FORMAT_ERROR_BACKTRACE` - Returns Oracle-formatted call stack in exception handlers
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for full decision details.
+## Key Design Decisions
+
+1. **Location:** `src/pl/plisql/src/` (not `contrib/ivorysql_ora/`)
+   - Avoids cross-module dependencies
+   - Has direct access to PL/iSQL exception handling
+
+2. **Exception Context Storage:** Session-level static variable in `pl_exec.c`
+   - Stored when entering exception handler
+   - Retrieved via `plisql_get_current_exception_context()` API
+   - Cleared when exiting exception handler
+
+3. **Output Format:** Transforms PostgreSQL error context to Oracle format
+   - `ORA-06512: at "SCHEMA.FUNCTION", line N`
+   - `ORA-06512: at line N` (for anonymous blocks)
 
 ## Documents
 
-### 1. [ARCHITECTURE.md](./ARCHITECTURE.md)
-**Architectural decision and rationale** ✅ DECISION MADE
+| Document | Description |
+|----------|-------------|
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | Implementation details and rationale |
+| [DEPENDENCY_ANALYSIS.md](./DEPENDENCY_ANALYSIS.md) | Analysis of cross-module dependency problem |
+| [EXISTING_PACKAGES.md](./EXISTING_PACKAGES.md) | Survey of Oracle packages in IvorySQL |
 
-Contains:
-- Analysis of two architectures (contrib-based vs. PL/iSQL-based)
-- Load order analysis (`initdb -m oracle` sequence)
-- Final decision: Architecture 2 (PL/iSQL-based)
-- Guidelines for future DBMS packages
+## Implementation Status
 
-### 2. [EXISTING_PACKAGES.md](./EXISTING_PACKAGES.md)
-**Status of built-in Oracle packages in IvorySQL**
-
-Key findings:
-- IvorySQL upstream has **ZERO** built-in DBMS packages
-- DBMS_UTILITY is the **first** built-in package being implemented
-- Web search confirms: No pre-existing DBMS packages in IvorySQL docs
-
-### 3. [DEPENDENCY_ANALYSIS.md](./DEPENDENCY_ANALYSIS.md)
-**Deep dive into the cross-module dependency problem**
-
-Detailed analysis:
-- Why DBMS_UTILITY needs PL/iSQL internals (exception context)
-- Why cross-module dependency is problematic (layering violation)
-- How PostgreSQL/EPAS/Orafce handle similar issues
-
-## Guidelines for Future DBMS Packages
-
-| Package Needs | Location |
-|--------------|----------|
-| PL/iSQL internals (exception context, call stack, etc.) | `src/pl/plisql/src/` |
-| Only Oracle datatypes, no PL/iSQL internals | `contrib/ivorysql_ora/` |
-| Both PL/iSQL internals AND Oracle types | Split: C in plisql, SQL wrapper in ivorysql_ora |
-
-## Current Status
-
-**DBMS_UTILITY:**
-- ✅ FORMAT_ERROR_BACKTRACE implemented (in contrib, needs refactoring)
-- ✅ Architecture decision made
-- ⏳ Refactor to `src/pl/plisql/src/`
-- ⏳ More functions to implement (FORMAT_ERROR_STACK, FORMAT_CALL_STACK, etc.)
-
-## Next Steps
-
-1. ✅ Document architecture decision
-2. ⏳ Refactor DBMS_UTILITY to `src/pl/plisql/src/`
-3. ⏳ Update regression tests
-4. ⏳ Update CLAUDE.md with guidelines
-5. ⏳ Continue DBMS_UTILITY implementation (more functions)
+- ✅ FORMAT_ERROR_BACKTRACE implemented
+- ✅ Regression tests passing
+- ⏳ Future: FORMAT_ERROR_STACK, FORMAT_CALL_STACK
 
 ## References
 
-**IvorySQL:**
-- Website: https://www.ivorysql.org/
-- Docs: https://www.ivorysql.org/docs/
-- GitHub: https://github.com/IvorySQL/IvorySQL
-
-**Oracle Documentation:**
-- DBMS_UTILITY: https://docs.oracle.com/en/database/oracle/oracle-database/23/arpls/DBMS_UTILITY.html
-
-**Related Projects:**
-- Orafce: https://github.com/orafce/orafce (Oracle compatibility for PostgreSQL)
-- EDB EPAS: https://www.enterprisedb.com/ (Commercial Oracle-compatible PostgreSQL)
+- [Oracle DBMS_UTILITY Documentation](https://docs.oracle.com/en/database/oracle/oracle-database/23/arpls/DBMS_UTILITY.html)
+- [IvorySQL Documentation](https://www.ivorysql.org/docs/)
 
 ---
 
 **Last Updated:** 2025-11-30
-**Authors:** Rophy Tsai, Claude
-**Status:** Decision made, implementation pending

@@ -44,8 +44,31 @@ When you want to test something and noticed you don't see containers, verify the
 
 3. **Build the project**
    ```bash
-   docker compose exec dev make -j\$(nproc)
+   docker compose exec dev make -j4
    ```
+
+## Debugging with GDB
+
+The dev container includes gdb with ptrace enabled.
+
+**Debug initdb:**
+```bash
+docker compose exec dev bash -c "
+export PATH=/home/ivorysql/IvorySQL/tmp_install/home/ivorysql/ivorysql/bin:\$PATH
+export LD_LIBRARY_PATH=/home/ivorysql/IvorySQL/tmp_install/home/ivorysql/ivorysql/lib:\$LD_LIBRARY_PATH
+rm -rf /tmp/testdb
+gdb -ex 'break main' -ex 'run -D /tmp/testdb' initdb
+"
+```
+
+**Debug postgres backend:**
+```bash
+# Start server, then attach to a backend process
+docker compose exec dev bash -c "
+export PATH=/home/ivorysql/ivorysql/bin:\$PATH
+gdb -p <backend_pid>
+"
+```
 
 ## Test Framework Overview
 

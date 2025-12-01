@@ -89,7 +89,7 @@ END dbms_output;
 
 CREATE OR REPLACE PACKAGE BODY dbms_output IS
 
-    PROCEDURE enable(buffer_size INTEGER DEFAULT NULL) IS
+    PROCEDURE enable(buffer_size INTEGER DEFAULT 20000) IS
     BEGIN
         PERFORM sys.ora_dbms_output_enable(buffer_size);
     END;

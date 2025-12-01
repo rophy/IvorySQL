@@ -39,6 +39,10 @@ COMMENT ON FUNCTION sys.ora_format_error_backtrace() IS 'Internal function for D
 --
 -- DBMS_UTILITY Package Definition
 --
+-- Note: CREATE PACKAGE syntax requires Oracle compatibility mode.
+-- In single-user mode (initdb), compatible_mode is automatically set to 'oracle'
+-- when database_mode is 'oracle', so no manual mode switching is needed.
+--
 
 CREATE OR REPLACE PACKAGE dbms_utility IS
   FUNCTION FORMAT_ERROR_BACKTRACE RETURN TEXT;

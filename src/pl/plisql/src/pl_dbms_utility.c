@@ -106,7 +106,10 @@ transform_and_append_line(StringInfo result, const char *line)
 		/* Find " line " */
 		line_marker = strstr(func_end, " line ");
 		if (!line_marker)
+		{
+			pfree(func_name);
 			return false;
+		}
 
 		line_num_start = line_marker + 6; /* Skip " line " */
 		line_num = atoi(line_num_start);
@@ -120,7 +123,10 @@ transform_and_append_line(StringInfo result, const char *line)
 	/* Find " line " */
 	line_marker = strstr(func_end, " line ");
 	if (!line_marker)
+	{
+		pfree(func_name);
 		return false;
+	}
 
 	line_num_start = line_marker + 6; /* Skip " line " */
 	line_num = atoi(line_num_start);

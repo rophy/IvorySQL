@@ -47,6 +47,40 @@ When you want to test something and noticed you don't see containers, verify the
    docker compose exec dev make -j4
    ```
 
+4. **Install the build**
+   ```bash
+   docker compose exec dev make install
+   ```
+
+## Build Verification (CRITICAL)
+
+**ALWAYS verify that installed files are newer than source files after `make install`.**
+
+The build system may not rebuild files if timestamps are stale. After `make install`, verify:
+
+```bash
+# Check if binary is newer than source
+docker compose exec dev stat -c "%Y %n" /home/ivorysql/ivorysql/bin/<binary> /home/ivorysql/IvorySQL/src/<path>/<source>.c
+
+# Check if installed extension SQL is updated
+docker compose exec dev grep "<expected_content>" /home/ivorysql/ivorysql/share/postgresql/extension/<file>.sql
+```
+
+**If installed files are older than source:**
+1. Use `touch` on source files to update timestamps
+2. Or run `make clean` in the specific subdirectory before rebuilding
+3. Then run `make && make install` again
+
+**Example - rebuilding initdb:**
+```bash
+docker compose exec dev bash -c "cd /home/ivorysql/IvorySQL/src/bin/initdb && make clean && make && make install"
+```
+
+**Example - reinstalling an extension SQL file:**
+```bash
+docker compose exec dev bash -c "cd /home/ivorysql/IvorySQL/src/pl/plisql/src && rm -f /home/ivorysql/ivorysql/share/postgresql/extension/plisql--1.0.sql && make install"
+```
+
 ## Debugging with GDB
 
 The dev container includes gdb with ptrace enabled.

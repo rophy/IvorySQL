@@ -1,232 +1,529 @@
 --
 -- Tests for DBMS_OUTPUT package
 --
--- Note: DBMS_OUTPUT uses TEXT type for string parameters
+-- Design: Every PUT operation is verified by corresponding GET operation
+-- to ensure content is properly buffered and retrieved.
 --
--- Enable output with default buffer size
-CALL dbms_output.enable();
--- Basic PUT_LINE tests
-CALL dbms_output.put_line('Hello, World!');
-CALL dbms_output.put_line('Testing DBMS_OUTPUT');
--- Test with empty string
-CALL dbms_output.put_line('');
--- Test with NULL (should output empty line)
-CALL dbms_output.put_line(NULL);
--- Test PUT and NEW_LINE separately
-CALL dbms_output.put('First part');
-CALL dbms_output.put(' second part');
-CALL dbms_output.new_line();
--- Test PUT with NULL (should append nothing)
-CALL dbms_output.put('Before NULL');
-CALL dbms_output.put(NULL);
-CALL dbms_output.put(' - After NULL');
-CALL dbms_output.new_line();
--- Test multiple PUT calls
-CALL dbms_output.put('Line');
-CALL dbms_output.put(' with');
-CALL dbms_output.put(' multiple');
-CALL dbms_output.put(' parts');
-CALL dbms_output.new_line();
--- Test DISABLE and re-ENABLE
-CALL dbms_output.disable();
-CALL dbms_output.put_line('This should not appear when disabled');
-CALL dbms_output.enable();
-CALL dbms_output.put_line('This should appear after re-enable');
--- Test within a procedure
-CREATE OR REPLACE PROCEDURE test_dbms_output_proc(p_count int)
-AS $$
-BEGIN
-    FOR i IN 1..p_count LOOP
-        dbms_output.put_line('Procedure output line ' || i);
-    END LOOP;
-END;
-$$ LANGUAGE plisql;
-/
-CALL dbms_output.enable();
-CALL test_dbms_output_proc(3);
--- Test within a function
-CREATE OR REPLACE FUNCTION test_dbms_output_func(p_value int) RETURNS int
-AS $$
-BEGIN
-    dbms_output.put_line('Function called with value: ' || p_value);
-    dbms_output.put_line('Returning: ' || (p_value * 2));
-    RETURN p_value * 2;
-END;
-$$ LANGUAGE plisql;
-/
-CALL dbms_output.enable();
-SELECT test_dbms_output_func(5);
- test_dbms_output_func 
------------------------
-                    10
-(1 row)
-
--- Test with exception handling
-BEGIN
-    dbms_output.enable();
-    dbms_output.put_line('Before exception');
-    BEGIN
-        RAISE EXCEPTION 'Test exception';
-    EXCEPTION WHEN OTHERS THEN
-        dbms_output.put_line('Exception caught: ' || SQLERRM);
-    END;
-    dbms_output.put_line('After exception');
-END;
-/
--- Test buffer size limits (minimum is 2000)
-CALL dbms_output.enable(1000);  -- Should fail
-ERROR:  buffer size must be between 2000 and 1000000
-CONTEXT:  SQL statement "SELECT sys.ora_dbms_output_enable(buffer_size)"
-PL/iSQL function enable line 3 at PERFORM
-CALL dbms_output.enable(2000);  -- Should succeed
-CALL dbms_output.enable(1000000);  -- Maximum
--- Test with maximum buffer size
-CALL dbms_output.enable(1000001);  -- Should fail (over max)
-ERROR:  buffer size must be between 2000 and 1000000
-CONTEXT:  SQL statement "SELECT sys.ora_dbms_output_enable(buffer_size)"
-PL/iSQL function enable line 3 at PERFORM
--- Test numeric and other data types
-DO $$
-DECLARE
-    num int := 42;
-    flt numeric := 3.14159;
-BEGIN
-    dbms_output.enable();
-    dbms_output.put_line('Integer: ' || num);
-    dbms_output.put_line('Float: ' || flt);
-    dbms_output.put_line('Boolean: ' || (1=1)::text);
-END;
-$$;
--- Test special characters
-DO $$
-BEGIN
-    dbms_output.enable();
-    dbms_output.put_line('Tab:	here');
-    dbms_output.put_line('Quote: ''single'' "double"');
-    dbms_output.put_line('Backslash: \ and forward: /');
-END;
-$$;
--- Test within nested blocks
-DO $$
-BEGIN
-    dbms_output.enable();
-    dbms_output.put_line('Outer block');
-    BEGIN
-        dbms_output.put_line('Inner block 1');
-        BEGIN
-            dbms_output.put_line('Inner block 2');
-        END;
-        dbms_output.put_line('Back to inner block 1');
-    END;
-    dbms_output.put_line('Back to outer block');
-END;
-$$;
--- Test with loops
-DO $$
-BEGIN
-    dbms_output.enable();
-    FOR i IN 1..5 LOOP
-        dbms_output.put_line('Loop iteration: ' || i);
-    END LOOP;
-END;
-$$;
--- Test ENABLE with NULL buffer size (should use default)
-CALL dbms_output.enable(NULL);
-CALL dbms_output.put_line('After enable with NULL');
--- Test very long line (edge case)
-DO $$
-DECLARE
-    very_long text := repeat('A', 32767);  -- Maximum line length in Oracle
-BEGIN
-    dbms_output.enable(100000);
-    BEGIN
-        dbms_output.put_line(very_long);
-        RAISE NOTICE 'Successfully output very long line';
-    EXCEPTION WHEN OTHERS THEN
-        RAISE NOTICE 'Error with very long line: %', SQLERRM;
-    END;
-END;
-$$;
-NOTICE:  Successfully output very long line
--- Test concatenation in PUT
-DO $$
-BEGIN
-    dbms_output.enable();
-    dbms_output.put('Part1' || ' ' || 'Part2');
-    dbms_output.new_line();
-END;
-$$;
--- Test buffer overflow scenario
-BEGIN
-    dbms_output.enable(2000);  -- Small buffer
-    FOR i IN 1..100 LOOP
-        BEGIN
-            dbms_output.put_line('Buffer test line ' || i || ' with some extra text to fill the buffer');
-        EXCEPTION WHEN OTHERS THEN
-            RAISE NOTICE 'Buffer full at line %: %', i, SQLERRM;
-            EXIT;
-        END;
-    END LOOP;
-END;
-/
-NOTICE:  Buffer full at line 35: ORU-10027: buffer overflow, limit of 2000 bytes
--- Test PUT without NEW_LINE (partial line)
-DO $$
-BEGIN
-    dbms_output.enable();
-    dbms_output.put('Partial ');
-    dbms_output.put('line ');
-    dbms_output.put('here');
-    -- Line not completed yet
-    dbms_output.new_line();  -- Now complete it
-    dbms_output.put_line('Complete line');
-END;
-$$;
--- Test ENABLE multiple times (should reset buffer)
-CALL dbms_output.enable();
-CALL dbms_output.put_line('First enable');
-CALL dbms_output.enable();  -- Re-enable should clear buffer
-CALL dbms_output.put_line('Second enable');
--- Test disable clears buffer
-CALL dbms_output.enable();
-CALL dbms_output.put_line('Before final disable');
-CALL dbms_output.disable();
--- Test GET_LINE
+-- =============================================================================
+-- Section 1: Basic PUT_LINE and GET_LINE
+-- =============================================================================
+-- Test 1.1: Simple PUT_LINE verified by GET_LINE
 DECLARE
     line TEXT;
     status INTEGER;
 BEGIN
     dbms_output.enable();
-    dbms_output.put_line('Test GET_LINE');
+    dbms_output.put_line('Hello, World!');
     dbms_output.get_line(line, status);
-    RAISE NOTICE 'Line: %, Status: %', line, status;
-    -- Try to get another line (should be empty)
-    dbms_output.get_line(line, status);
-    RAISE NOTICE 'Empty line: %, Status: %', line, status;
+    RAISE NOTICE 'Test 1.1 - Line: [%], Status: %', line, status;
 END;
 /
-NOTICE:  Line: Test GET_LINE, Status: 0
-NOTICE:  Empty line: <NULL>, Status: 1
--- Test GET_LINES
+NOTICE:  Test 1.1 - Line: [Hello, World!], Status: 0
+-- Test 1.2: Multiple PUT_LINE calls verified by GET_LINES
 DECLARE
     lines TEXT[];
     numlines INTEGER := 10;
 BEGIN
     dbms_output.enable();
-    dbms_output.put_line('Line 1');
-    dbms_output.put_line('Line 2');
-    dbms_output.put_line('Line 3');
+    dbms_output.put_line('First line');
+    dbms_output.put_line('Second line');
+    dbms_output.put_line('Third line');
     dbms_output.get_lines(lines, numlines);
-    RAISE NOTICE 'Retrieved % lines', numlines;
+    RAISE NOTICE 'Test 1.2 - Retrieved % lines', numlines;
     FOR i IN 1..numlines LOOP
-        RAISE NOTICE 'Line %: %', i, lines[i];
+        RAISE NOTICE '  Line %: [%]', i, lines[i];
     END LOOP;
 END;
 /
-NOTICE:  Retrieved 3 lines
-NOTICE:  Line 1: Line 1
-NOTICE:  Line 2: Line 2
-NOTICE:  Line 3: Line 3
+NOTICE:  Test 1.2 - Retrieved 3 lines
+NOTICE:    Line 1: [First line]
+NOTICE:    Line 2: [Second line]
+NOTICE:    Line 3: [Third line]
+-- Test 1.3: Empty string handling
+DECLARE
+    line TEXT;
+    status INTEGER;
+BEGIN
+    dbms_output.enable();
+    dbms_output.put_line('');
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Test 1.3 - Empty string: [%], Status: %', line, status;
+END;
+/
+NOTICE:  Test 1.3 - Empty string: [], Status: 0
+-- Test 1.4: NULL handling (should output empty line)
+DECLARE
+    line TEXT;
+    status INTEGER;
+BEGIN
+    dbms_output.enable();
+    dbms_output.put_line(NULL);
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Test 1.4 - NULL input: [%], Status: %', line, status;
+END;
+/
+NOTICE:  Test 1.4 - NULL input: [], Status: 0
+-- Test 1.5: GET_LINE when buffer is empty (status should be 1)
+DECLARE
+    line TEXT;
+    status INTEGER;
+BEGIN
+    dbms_output.enable();
+    -- Don't put anything
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Test 1.5 - Empty buffer: Line=[%], Status=%', line, status;
+END;
+/
+NOTICE:  Test 1.5 - Empty buffer: Line=[<NULL>], Status=1
+-- =============================================================================
+-- Section 2: PUT and NEW_LINE
+-- =============================================================================
+-- Test 2.1: PUT followed by NEW_LINE
+DECLARE
+    line TEXT;
+    status INTEGER;
+BEGIN
+    dbms_output.enable();
+    dbms_output.put('First part');
+    dbms_output.put(' second part');
+    dbms_output.new_line();
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Test 2.1 - Combined: [%], Status: %', line, status;
+END;
+/
+NOTICE:  Test 2.1 - Combined: [First part second part], Status: 0
+-- Test 2.2: PUT with NULL (should append nothing)
+DECLARE
+    line TEXT;
+    status INTEGER;
+BEGIN
+    dbms_output.enable();
+    dbms_output.put('Before');
+    dbms_output.put(NULL);
+    dbms_output.put('After');
+    dbms_output.new_line();
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Test 2.2 - PUT with NULL: [%], Status: %', line, status;
+END;
+/
+NOTICE:  Test 2.2 - PUT with NULL: [BeforeAfter], Status: 0
+-- Test 2.3: Multiple PUT calls building one line
+DECLARE
+    line TEXT;
+    status INTEGER;
+BEGIN
+    dbms_output.enable();
+    dbms_output.put('A');
+    dbms_output.put('B');
+    dbms_output.put('C');
+    dbms_output.put('D');
+    dbms_output.new_line();
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Test 2.3 - Multiple PUTs: [%], Status: %', line, status;
+END;
+/
+NOTICE:  Test 2.3 - Multiple PUTs: [ABCD], Status: 0
+-- Test 2.4: PUT_LINE after PUT (should create two lines)
+DECLARE
+    lines TEXT[];
+    numlines INTEGER := 10;
+BEGIN
+    dbms_output.enable();
+    dbms_output.put('Partial');
+    dbms_output.new_line();
+    dbms_output.put_line('Complete');
+    dbms_output.get_lines(lines, numlines);
+    RAISE NOTICE 'Test 2.4 - Retrieved % lines', numlines;
+    FOR i IN 1..numlines LOOP
+        RAISE NOTICE '  Line %: [%]', i, lines[i];
+    END LOOP;
+END;
+/
+NOTICE:  Test 2.4 - Retrieved 2 lines
+NOTICE:    Line 1: [Partial]
+NOTICE:    Line 2: [Complete]
+-- =============================================================================
+-- Section 3: ENABLE and DISABLE behavior
+-- =============================================================================
+-- Test 3.1: DISABLE prevents output from being buffered
+DECLARE
+    line TEXT;
+    status INTEGER;
+BEGIN
+    dbms_output.enable();
+    dbms_output.put_line('Before disable');
+    dbms_output.disable();
+    dbms_output.put_line('During disable - should not appear');
+    dbms_output.enable();
+    -- Try to get - should only see what was put after re-enable
+    dbms_output.put_line('After re-enable');
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Test 3.1 - After disable/enable cycle: [%], Status: %', line, status;
+END;
+/
+NOTICE:  Test 3.1 - After disable/enable cycle: [After re-enable], Status: 0
+-- Test 3.2: DISABLE clears existing buffer
+DECLARE
+    line TEXT;
+    status INTEGER;
+BEGIN
+    dbms_output.enable();
+    dbms_output.put_line('This will be cleared');
+    dbms_output.disable();
+    dbms_output.enable();
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Test 3.2 - Buffer after disable: [%], Status: %', line, status;
+END;
+/
+NOTICE:  Test 3.2 - Buffer after disable: [<NULL>], Status: 1
+-- Test 3.3: Re-ENABLE clears buffer
+DECLARE
+    line TEXT;
+    status INTEGER;
+BEGIN
+    dbms_output.enable();
+    dbms_output.put_line('First enable content');
+    dbms_output.enable();  -- Re-enable should clear
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Test 3.3 - After re-enable: [%], Status: %', line, status;
+END;
+/
+NOTICE:  Test 3.3 - After re-enable: [<NULL>], Status: 1
+-- Test 3.4: Output while disabled is silently ignored
+DECLARE
+    line TEXT;
+    status INTEGER;
+BEGIN
+    dbms_output.disable();
+    dbms_output.put_line('Ignored 1');
+    dbms_output.put('Ignored 2');
+    dbms_output.new_line();
+    dbms_output.enable();
+    dbms_output.put_line('Visible');
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Test 3.4 - Only visible after enable: [%], Status: %', line, status;
+END;
+/
+NOTICE:  Test 3.4 - Only visible after enable: [Visible], Status: 0
+-- =============================================================================
+-- Section 4: Buffer size limits
+-- =============================================================================
+-- Test 4.1: Buffer size below minimum (should fail)
+CALL dbms_output.enable(1000);
+ERROR:  buffer size must be between 2000 and 1000000
+CONTEXT:  SQL statement "SELECT sys.ora_dbms_output_enable(buffer_size)"
+PL/iSQL function enable line 3 at PERFORM
+-- Test 4.2: Buffer size at minimum (should succeed)
+DECLARE
+    line TEXT;
+    status INTEGER;
+BEGIN
+    dbms_output.enable(2000);
+    dbms_output.put_line('Min buffer works');
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Test 4.2 - Min buffer: [%]', line;
+END;
+/
+NOTICE:  Test 4.2 - Min buffer: [Min buffer works]
+-- Test 4.3: Buffer size at maximum (should succeed)
+DECLARE
+    line TEXT;
+    status INTEGER;
+BEGIN
+    dbms_output.enable(1000000);
+    dbms_output.put_line('Max buffer works');
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Test 4.3 - Max buffer: [%]', line;
+END;
+/
+NOTICE:  Test 4.3 - Max buffer: [Max buffer works]
+-- Test 4.4: Buffer size above maximum (should fail)
+CALL dbms_output.enable(1000001);
+ERROR:  buffer size must be between 2000 and 1000000
+CONTEXT:  SQL statement "SELECT sys.ora_dbms_output_enable(buffer_size)"
+PL/iSQL function enable line 3 at PERFORM
+-- Test 4.5: NULL buffer size uses default
+DECLARE
+    line TEXT;
+    status INTEGER;
+BEGIN
+    dbms_output.enable(NULL);
+    dbms_output.put_line('NULL buffer uses default');
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Test 4.5 - NULL buffer: [%]', line;
+END;
+/
+NOTICE:  Test 4.5 - NULL buffer: [NULL buffer uses default]
+-- =============================================================================
+-- Section 5: Buffer overflow
+-- =============================================================================
+-- Test 5.1: Buffer overflow produces error
+DECLARE
+    overflow_occurred BOOLEAN := FALSE;
+    line_count INTEGER := 0;
+BEGIN
+    dbms_output.enable(2000);  -- Small buffer
+    FOR i IN 1..100 LOOP
+        BEGIN
+            dbms_output.put_line('Buffer test line ' || i || ' with extra padding text');
+            line_count := i;
+        EXCEPTION WHEN OTHERS THEN
+            RAISE NOTICE 'Test 5.1 - Overflow at line %: %', i, SQLERRM;
+            overflow_occurred := TRUE;
+            EXIT;
+        END;
+    END LOOP;
+    IF NOT overflow_occurred THEN
+        RAISE NOTICE 'Test 5.1 - No overflow occurred (unexpected)';
+    END IF;
+END;
+/
+NOTICE:  Test 5.1 - Overflow at line 47: ORU-10027: buffer overflow, limit of 2000 bytes
+-- =============================================================================
+-- Section 6: GET_LINE and GET_LINES behavior
+-- =============================================================================
+-- Test 6.1: GET_LINE returns lines in order
+DECLARE
+    line TEXT;
+    status INTEGER;
+BEGIN
+    dbms_output.enable();
+    dbms_output.put_line('Line A');
+    dbms_output.put_line('Line B');
+    dbms_output.put_line('Line C');
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Test 6.1a - First: [%]', line;
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Test 6.1b - Second: [%]', line;
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Test 6.1c - Third: [%]', line;
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Test 6.1d - Fourth (empty): [%], Status: %', line, status;
+END;
+/
+NOTICE:  Test 6.1a - First: [Line A]
+NOTICE:  Test 6.1b - Second: [Line B]
+NOTICE:  Test 6.1c - Third: [Line C]
+NOTICE:  Test 6.1d - Fourth (empty): [<NULL>], Status: 1
+-- Test 6.2: GET_LINES with numlines larger than available
+DECLARE
+    lines TEXT[];
+    numlines INTEGER := 100;  -- Request more than available
+BEGIN
+    dbms_output.enable();
+    dbms_output.put_line('Only');
+    dbms_output.put_line('Three');
+    dbms_output.put_line('Lines');
+    dbms_output.get_lines(lines, numlines);
+    RAISE NOTICE 'Test 6.2 - Requested 100, got %', numlines;
+    FOR i IN 1..numlines LOOP
+        RAISE NOTICE '  Line %: [%]', i, lines[i];
+    END LOOP;
+END;
+/
+NOTICE:  Test 6.2 - Requested 100, got 3
+NOTICE:    Line 1: [Only]
+NOTICE:    Line 2: [Three]
+NOTICE:    Line 3: [Lines]
+-- Test 6.3: GET_LINES with numlines smaller than available
+DECLARE
+    lines TEXT[];
+    numlines INTEGER := 2;  -- Request fewer than available
+    line TEXT;
+    status INTEGER;
+BEGIN
+    dbms_output.enable();
+    dbms_output.put_line('One');
+    dbms_output.put_line('Two');
+    dbms_output.put_line('Three');
+    dbms_output.put_line('Four');
+    dbms_output.get_lines(lines, numlines);
+    RAISE NOTICE 'Test 6.3a - Got % lines with GET_LINES', numlines;
+    FOR i IN 1..numlines LOOP
+        RAISE NOTICE '  Line %: [%]', i, lines[i];
+    END LOOP;
+    -- Remaining lines should still be available
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Test 6.3b - Remaining: [%], Status: %', line, status;
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Test 6.3c - Remaining: [%], Status: %', line, status;
+END;
+/
+NOTICE:  Test 6.3a - Got 2 lines with GET_LINES
+NOTICE:    Line 1: [One]
+NOTICE:    Line 2: [Two]
+NOTICE:  Test 6.3b - Remaining: [Three], Status: 0
+NOTICE:  Test 6.3c - Remaining: [Four], Status: 0
+-- =============================================================================
+-- Section 7: Usage in procedures and functions
+-- =============================================================================
+-- Test 7.1: Output from procedure
+CREATE OR REPLACE PROCEDURE test_output_proc(p_msg TEXT)
+AS $$
+BEGIN
+    dbms_output.put_line('Proc says: ' || p_msg);
+END;
+$$ LANGUAGE plisql;
+/
+DECLARE
+    line TEXT;
+    status INTEGER;
+BEGIN
+    dbms_output.enable();
+    test_output_proc('Hello from procedure');
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Test 7.1 - From procedure: [%]', line;
+END;
+/
+NOTICE:  Test 7.1 - From procedure: [Proc says: Hello from procedure]
+-- Test 7.2: Output from function (output preserved across call)
+CREATE OR REPLACE FUNCTION test_output_func(p_val INTEGER) RETURNS INTEGER
+AS $$
+BEGIN
+    dbms_output.put_line('Func input: ' || p_val);
+    dbms_output.put_line('Func output: ' || (p_val * 2));
+    RETURN p_val * 2;
+END;
+$$ LANGUAGE plisql;
+/
+DECLARE
+    result INTEGER;
+    lines TEXT[];
+    numlines INTEGER := 10;
+BEGIN
+    dbms_output.enable();
+    result := test_output_func(5);
+    dbms_output.get_lines(lines, numlines);
+    RAISE NOTICE 'Test 7.2 - Function returned: %', result;
+    FOR i IN 1..numlines LOOP
+        RAISE NOTICE '  Output %: [%]', i, lines[i];
+    END LOOP;
+END;
+/
+NOTICE:  Test 7.2 - Function returned: 10
+NOTICE:    Output 1: [Func input: 5]
+NOTICE:    Output 2: [Func output: 10]
+-- =============================================================================
+-- Section 8: Special cases
+-- =============================================================================
+-- Test 8.1: Special characters
+DECLARE
+    lines TEXT[];
+    numlines INTEGER := 10;
+BEGIN
+    dbms_output.enable();
+    dbms_output.put_line('Tab:	here');
+    dbms_output.put_line('Quote: ''single'' "double"');
+    dbms_output.put_line('Backslash: \ forward: /');
+    dbms_output.get_lines(lines, numlines);
+    RAISE NOTICE 'Test 8.1 - Special chars: % lines', numlines;
+    FOR i IN 1..numlines LOOP
+        RAISE NOTICE '  [%]', lines[i];
+    END LOOP;
+END;
+/
+NOTICE:  Test 8.1 - Special chars: 3 lines
+NOTICE:    [Tab:	here]
+NOTICE:    [Quote: 'single' "double"]
+NOTICE:    [Backslash: \ forward: /]
+-- Test 8.2: Numeric values via concatenation
+DECLARE
+    line TEXT;
+    status INTEGER;
+BEGIN
+    dbms_output.enable();
+    dbms_output.put_line('Number: ' || 42);
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Test 8.2 - Numeric: [%]', line;
+END;
+/
+NOTICE:  Test 8.2 - Numeric: [Number: 42]
+-- Test 8.3: Very long line
+DECLARE
+    very_long TEXT := repeat('X', 1000);
+    line TEXT;
+    status INTEGER;
+BEGIN
+    dbms_output.enable(10000);
+    dbms_output.put_line(very_long);
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Test 8.3 - Long line length: %', length(line);
+END;
+/
+NOTICE:  Test 8.3 - Long line length: 1000
+-- Test 8.4: Exception handling preserves buffer
+DECLARE
+    line TEXT;
+    status INTEGER;
+BEGIN
+    dbms_output.enable();
+    dbms_output.put_line('Before exception');
+    BEGIN
+        RAISE EXCEPTION 'Test error';
+    EXCEPTION WHEN OTHERS THEN
+        dbms_output.put_line('Caught: ' || SQLERRM);
+    END;
+    dbms_output.put_line('After exception');
+    -- Verify all three lines are in buffer
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Test 8.4a - [%]', line;
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Test 8.4b - [%]', line;
+    dbms_output.get_line(line, status);
+    RAISE NOTICE 'Test 8.4c - [%]', line;
+END;
+/
+NOTICE:  Test 8.4a - [Before exception]
+NOTICE:  Test 8.4b - [Caught: Test error]
+NOTICE:  Test 8.4c - [After exception]
+-- Test 8.5: Nested blocks
+DECLARE
+    lines TEXT[];
+    numlines INTEGER := 10;
+BEGIN
+    dbms_output.enable();
+    dbms_output.put_line('Outer');
+    BEGIN
+        dbms_output.put_line('Inner 1');
+        BEGIN
+            dbms_output.put_line('Inner 2');
+        END;
+    END;
+    dbms_output.put_line('Back to outer');
+    dbms_output.get_lines(lines, numlines);
+    RAISE NOTICE 'Test 8.5 - Nested blocks: % lines', numlines;
+    FOR i IN 1..numlines LOOP
+        RAISE NOTICE '  [%]', lines[i];
+    END LOOP;
+END;
+/
+NOTICE:  Test 8.5 - Nested blocks: 4 lines
+NOTICE:    [Outer]
+NOTICE:    [Inner 1]
+NOTICE:    [Inner 2]
+NOTICE:    [Back to outer]
+-- Test 8.6: Loop output
+DECLARE
+    lines TEXT[];
+    numlines INTEGER := 10;
+BEGIN
+    dbms_output.enable();
+    FOR i IN 1..3 LOOP
+        dbms_output.put_line('Iteration ' || i);
+    END LOOP;
+    dbms_output.get_lines(lines, numlines);
+    RAISE NOTICE 'Test 8.6 - Loop: % lines', numlines;
+    FOR i IN 1..numlines LOOP
+        RAISE NOTICE '  [%]', lines[i];
+    END LOOP;
+END;
+/
+NOTICE:  Test 8.6 - Loop: 3 lines
+NOTICE:    [Iteration 1]
+NOTICE:    [Iteration 2]
+NOTICE:    [Iteration 3]
+-- =============================================================================
 -- Cleanup
-DROP PROCEDURE test_dbms_output_proc;
-DROP FUNCTION test_dbms_output_func;
+-- =============================================================================
+DROP PROCEDURE test_output_proc;
+DROP FUNCTION test_output_func;

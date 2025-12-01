@@ -231,3 +231,40 @@ END;
 CALL test_schema.schema_caller();
 
 DROP SCHEMA test_schema CASCADE;
+
+-- Test 10: Nested exception handlers - outer context preserved after inner handler
+-- This tests that when an exception handler calls a procedure that has its own
+-- exception handler, the outer handler's backtrace is preserved.
+CREATE OR REPLACE PROCEDURE test_nested_inner AS
+BEGIN
+  RAISE EXCEPTION 'Inner error';
+EXCEPTION
+  WHEN OTHERS THEN
+    RAISE INFO 'Inner handler caught error';
+END;
+/
+
+CREATE OR REPLACE PROCEDURE test_nested_outer AS
+  v_bt_before VARCHAR2(4000);
+  v_bt_after VARCHAR2(4000);
+BEGIN
+  RAISE EXCEPTION 'Outer error';
+EXCEPTION
+  WHEN OTHERS THEN
+    v_bt_before := DBMS_UTILITY.FORMAT_ERROR_BACKTRACE;
+    RAISE INFO 'Outer backtrace before: %', v_bt_before;
+    test_nested_inner();
+    v_bt_after := DBMS_UTILITY.FORMAT_ERROR_BACKTRACE;
+    RAISE INFO 'Outer backtrace after: %', v_bt_after;
+    IF v_bt_before = v_bt_after THEN
+      RAISE INFO 'SUCCESS: Outer backtrace preserved';
+    ELSE
+      RAISE INFO 'FAILURE: Outer backtrace changed';
+    END IF;
+END;
+/
+
+CALL test_nested_outer();
+
+DROP PROCEDURE test_nested_outer;
+DROP PROCEDURE test_nested_inner;

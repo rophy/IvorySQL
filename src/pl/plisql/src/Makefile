@@ -40,6 +40,7 @@ rpath =
 OBJS = \
 	$(WIN32RES) \
 	pl_comp.o \
+	pl_dbms_output.o \
 	pl_exec.o \
 	pl_funcs.o \
 	pl_gram.o \

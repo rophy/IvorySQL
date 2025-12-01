@@ -1,7 +1,7 @@
 --
 -- Tests for DBMS_OUTPUT package
 --
--- Note: Use Oracle data types (VARCHAR2, INTEGER) for OUT parameters in Oracle mode
+-- Note: DBMS_OUTPUT uses TEXT type for string parameters
 --
 
 -- Enable output with default buffer size
@@ -207,9 +207,9 @@ CALL dbms_output.enable();
 CALL dbms_output.put_line('Before final disable');
 CALL dbms_output.disable();
 
--- Test GET_LINE (use Oracle types: VARCHAR2, INTEGER)
+-- Test GET_LINE
 DECLARE
-    line VARCHAR2;
+    line TEXT;
     status INTEGER;
 BEGIN
     dbms_output.enable();
@@ -222,9 +222,9 @@ BEGIN
 END;
 /
 
--- Test GET_LINES (use Oracle types: VARCHAR2[], INTEGER)
+-- Test GET_LINES
 DECLARE
-    lines VARCHAR2[];
+    lines TEXT[];
     numlines INTEGER := 10;
 BEGIN
     dbms_output.enable();

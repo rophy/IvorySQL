@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * dbms_output.c
+ * pl_dbms_output.c
  *
  * This file contains the native implementation of Oracle's DBMS_OUTPUT
  * package for IvorySQL.
@@ -21,7 +21,7 @@
  * Provides session-level buffering for PUT_LINE, PUT, NEW_LINE,
  * GET_LINE, and GET_LINES functions with full Oracle compatibility.
  *
- * contrib/ivorysql_ora/src/builtin_functions/dbms_output.c
+ * src/pl/plisql/src/pl_dbms_output.c
  *
  *-------------------------------------------------------------------------
  */
@@ -406,7 +406,7 @@ ora_dbms_output_new_line(PG_FUNCTION_ARGS)
  * ora_dbms_output_get_line
  *
  * Retrieve one line from buffer.
- * Returns: (line VARCHAR2, status INTEGER)
+ * Returns: (line TEXT, status INTEGER)
  * - status = 0: success, line contains data
  * - status = 1: no more lines, line is NULL (Oracle behavior)
  */
@@ -452,7 +452,7 @@ ora_dbms_output_get_line(PG_FUNCTION_ARGS)
  *
  * Retrieve multiple lines from buffer.
  * Input: numlines (max lines to retrieve)
- * Returns: (lines VARCHAR2[], actual_count INTEGER)
+ * Returns: (lines TEXT[], actual_count INTEGER)
  * - actual_count is set to number of lines actually retrieved
  */
 Datum

@@ -52,28 +52,23 @@ When you want to test something and noticed you don't see containers, verify the
    docker compose exec dev make install
    ```
 
-## Dual Build Systems (IMPORTANT)
+## Build System
 
-IvorySQL supports two build systems that **must be kept in sync**:
+IvorySQL uses Autoconf/Make (traditional) build system:
 
 | Build System | Configuration File | Build Command |
 |--------------|-------------------|---------------|
-| Autoconf/Make (traditional) | `Makefile` | `./configure && make` |
-| Meson/Ninja (modern) | `meson.build` | `meson setup build && ninja -C build` |
+| Autoconf/Make | `Makefile` | `./configure && make` |
 
 ### Adding New Source Files
 
-When adding a new `.c` file, update BOTH:
-- `Makefile` - add to `OBJS` list (as `.o`)
-- `meson.build` - add to sources `files()` list (as `.c`)
+When adding a new `.c` file:
+- Update `Makefile` - add to `OBJS` list (as `.o`)
 
 ### Adding New Tests
 
-When adding a new test, update BOTH:
-- `Makefile` - add to `REGRESS` list
-- `meson.build` - add to `tests` sql list
-
-**Failure to update both will cause build failures for users of the other build system.**
+When adding a new test:
+- Update `Makefile` - add to `REGRESS` list
 
 ## Build Verification (CRITICAL)
 

@@ -5,6 +5,17 @@ This project is a work of [IvorySQL](https://github.com/IvorySQL/IvorySQL). Chan
 
 # Build Instructions
 
+## Dev Container Requirement (MANDATORY)
+
+**ALWAYS use the dev container (`docker-compose.yaml`) for build, install, and test operations. NEVER run these on the host machine.**
+
+Before running any build/install/test command, verify `docker-compose.yaml` exists:
+```bash
+ls docker-compose.yaml
+```
+
+If `docker-compose.yaml` is missing, **STOP and ask the user** before proceeding.
+
 ## Git Commit Policy (MANDATORY)
 
 **Commit message format:**

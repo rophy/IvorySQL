@@ -272,6 +272,12 @@ ExecScanSubPlan(SubPlanState *node,
 	ExecReScan(planstate);
 
 	/*
+	 * Reset ROWNUM counter for Oracle compatibility.
+	 * This ensures correlated subqueries start fresh for each outer row.
+	 */
+	planstate->state->es_rownum = 0;
+
+	/*
 	 * For all sublink types except EXPR_SUBLINK and ARRAY_SUBLINK, the result
 	 * is boolean as are the results of the combining operators. We combine
 	 * results across tuples (if the subplan produces more than one) using OR

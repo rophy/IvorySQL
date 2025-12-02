@@ -1946,12 +1946,15 @@ typedef struct TidRangeScanState
  *
  *		SubqueryScanState is used for scanning a sub-query in the range table.
  *		ScanTupleSlot references the current output tuple of the sub-query.
+ *		rownum_reset tracks whether ROWNUM counter has been reset for Oracle
+ *		compatibility (inner plans may increment before SubqueryScan runs).
  * ----------------
  */
 typedef struct SubqueryScanState
 {
 	ScanState	ss;				/* its first field is NodeTag */
 	PlanState  *subplan;
+	bool		rownum_reset;	/* has ROWNUM been reset for this scan? */
 } SubqueryScanState;
 
 /* ----------------

@@ -206,9 +206,11 @@ ExecScanExtended(ScanState *node,
 		econtext->ecxt_scantuple = slot;
 
 		/*
-		 * Increment ROWNUM counter BEFORE qual check for Oracle compatibility.
-		 * Oracle assigns ROWNUM to each row as it's fetched, then evaluates
-		 * the WHERE clause. This allows WHERE ROWNUM <= N to work correctly.
+		 * For Oracle ROWNUM compatibility: pre-increment ROWNUM before the
+		 * qual check so that ROWNUM conditions (like ROWNUM <= 5) see the
+		 * correct value.  If the row fails the qual, we'll revert the
+		 * increment.  This matches Oracle's behavior where ROWNUM is assigned
+		 * to each candidate row before checking the WHERE clause.
 		 */
 		if (node->ps.state)
 			node->ps.state->es_rownum++;
@@ -224,8 +226,8 @@ ExecScanExtended(ScanState *node,
 		{
 			/*
 			 * Found a satisfactory scan tuple.
+			 * The ROWNUM increment is already done.
 			 */
-
 			if (projInfo)
 			{
 				TupleTableSlot *result;
@@ -262,7 +264,18 @@ ExecScanExtended(ScanState *node,
 			}
 		}
 		else
+		{
+			/*
+			 * Row failed qual check.  Revert the ROWNUM increment so that
+			 * only rows that pass quals consume ROWNUM values.  This matches
+			 * Oracle's behavior where ROWNUM is only assigned to rows that
+			 * are actually "selected".
+			 */
+			if (node->ps.state)
+				node->ps.state->es_rownum--;
+
 			InstrCountFiltered1(node, 1);
+		}
 
 		/*
 		 * Tuple fails qual, so free per-tuple memory and try again.

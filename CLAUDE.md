@@ -50,7 +50,7 @@ When you want to test something and noticed you don't see containers, verify the
 
 2. **Configure the build**
    ```bash
-   docker compose exec dev ./configure --prefix=/home/ivorysql/ivorysql --enable-debug --enable-cassert --with-uuid=e2fs --with-libxml
+   docker compose exec dev ./configure --prefix=/home/ivorysql/ivorysql --enable-debug --enable-cassert --with-uuid=e2fs --with-libxml --with-libxslt
    ```
 
 3. **Build the project**

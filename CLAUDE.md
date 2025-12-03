@@ -170,13 +170,13 @@ All tests follow the same pattern:
 ### Running Tests
 
 ```bash
-# PostgreSQL tests
+# PostgreSQL tests (quick)
 docker compose exec dev make check
 
-# Oracle compatibility tests
+# Oracle compatibility tests (quick)
 docker compose exec dev make oracle-check
 
-# Both test suites
+# Both test suites (quick)
 docker compose exec dev make all-check
 
 # Specific contrib module (e.g., ivorysql_ora)
@@ -185,6 +185,27 @@ docker compose exec dev bash -c "cd contrib/ivorysql_ora && make installcheck"
 # PL/iSQL language tests
 docker compose exec dev bash -c "cd src/pl/plisql/src && make oracle-check"
 ```
+
+### Full CI Regression Tests (IMPORTANT)
+
+Before submitting a PR, run the full regression test suites that CI runs:
+
+```bash
+# Oracle regression tests (runs oracle-check-world)
+# This is what oracle_regression.yml CI workflow runs
+docker compose exec dev bash -c "cd /home/ivorysql/IvorySQL && make oracle-check-world"
+
+# PostgreSQL regression tests in Oracle mode (runs check and oracle-pg-check)
+# This is what oracle_pg_regression.yml CI workflow runs
+docker compose exec dev bash -c "cd /home/ivorysql/IvorySQL && make check && make oracle-pg-check"
+```
+
+**Note:** The `-world` variants build a temporary installation and run all tests including contrib modules. These take longer but match what CI runs.
+
+**Expected output files that may need updating:**
+- `src/oracle_test/regress/expected/*.out` - Oracle mode test expectations
+- `src/test/regress/expected/*.out` - PostgreSQL mode test expectations
+- `src/test/regress/expected/*_1.out` - Alternative expected outputs for different configurations
 
 ### Adding New Tests
 

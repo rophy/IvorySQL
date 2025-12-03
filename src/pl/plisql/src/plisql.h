@@ -1461,4 +1461,19 @@ extern void plisql_recover_yylex_global_proper(void *yylex_data);
 extern int	plisql_yyparse(PLiSQL_stmt_block * *plisql_parse_result_p,
 						   yyscan_t yyscanner);
 
+/*
+ * Externs in pl_exec.c for exception context access (used by DBMS_UTILITY).
+ *
+ * plisql_get_current_exception_context: Returns pointer to internal ErrorData
+ *     context string. Caller must NOT free. Valid only within exception handler.
+ * plisql_get_current_exception_message: Returns pointer to internal ErrorData
+ *     message string. Caller must NOT free. Valid only within exception handler.
+ * plisql_get_current_exception_sqlerrcode: Returns SQLSTATE error code.
+ * plisql_get_call_stack: Returns palloc'd string that caller must pfree.
+ */
+extern PGDLLEXPORT const char *plisql_get_current_exception_context(void);
+extern PGDLLEXPORT const char *plisql_get_current_exception_message(void);
+extern PGDLLEXPORT int plisql_get_current_exception_sqlerrcode(void);
+extern PGDLLEXPORT char *plisql_get_call_stack(void);
+
 #endif							/* PLISQL_H */

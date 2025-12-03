@@ -461,6 +461,12 @@ contain_mutable_functions_walker(Node *node, void *context)
 		return true;
 	}
 
+	if (IsA(node, RownumExpr))
+	{
+		/* RownumExpr is volatile - changes for every row */
+		return true;
+	}
+
 	/*
 	 * It should be safe to treat MinMaxExpr as immutable, because it will
 	 * depend on a non-cross-type btree comparison function, and those should
@@ -583,6 +589,12 @@ contain_volatile_functions_walker(Node *node, void *context)
 	if (IsA(node, NextValueExpr))
 	{
 		/* NextValueExpr is volatile */
+		return true;
+	}
+
+	if (IsA(node, RownumExpr))
+	{
+		/* RownumExpr is volatile - changes for every row */
 		return true;
 	}
 
@@ -878,6 +890,17 @@ max_parallel_hazard_walker(Node *node, max_parallel_hazard_context *context)
 	}
 
 	else if (IsA(node, NextValueExpr))
+	{
+		if (max_parallel_hazard_test(PROPARALLEL_UNSAFE, context))
+			return true;
+	}
+
+	/*
+	 * RownumExpr is parallel-unsafe because the ROWNUM counter is maintained
+	 * per-query in EState, and parallel workers would have separate counters
+	 * leading to incorrect row numbering.
+	 */
+	else if (IsA(node, RownumExpr))
 	{
 		if (max_parallel_hazard_test(PROPARALLEL_UNSAFE, context))
 			return true;

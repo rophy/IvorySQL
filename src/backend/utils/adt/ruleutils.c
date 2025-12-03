@@ -9337,6 +9337,7 @@ isSimpleNode(Node *node, Node *parentNode, int prettyFlags)
 		case T_SQLValueFunction:
 		case T_XmlExpr:
 		case T_NextValueExpr:
+		case T_RownumExpr:
 		case T_NullIfExpr:
 		case T_Aggref:
 		case T_GroupingFunc:
@@ -10835,6 +10836,11 @@ get_rule_expr(Node *node, deparse_context *context,
 															NIL));
 				appendStringInfoChar(buf, ')');
 			}
+			break;
+
+		case T_RownumExpr:
+			/* Oracle ROWNUM pseudocolumn */
+			appendStringInfoString(buf, "ROWNUM");
 			break;
 
 		case T_InferenceElem:
@@ -14410,7 +14416,7 @@ pg_get_function_arg_reference_typerowtype_internal(Tuplestorestate **tupstore,
 		{
 			RangeVar   *rel = makeRangeVar(NULL, NULL, typeName->location);
 			char	   *field = NULL;
-			Oid			relid;
+			Oid		relid_1;
 			AttrNumber	attnum;
 
 			/* deconstruct the name list */
@@ -14447,12 +14453,12 @@ pg_get_function_arg_reference_typerowtype_internal(Tuplestorestate **tupstore,
 					break;
 			}
 
-			relid = RangeVarGetRelid(rel, NoLock, true);
-			attnum = get_attnum(relid, field);
+			relid_1 = RangeVarGetRelid(rel, NoLock, true);
+			attnum = get_attnum(relid_1, field);
 
 			if (attnum != InvalidAttrNumber)
 			{
-				get_atttypetypmodcoll(relid, attnum,
+				get_atttypetypmodcoll(relid_1, attnum,
 									  &fieldTypeId, &fieldTypMod, &fieldCollation);
 
 				/* this construct should never have an array indicator */

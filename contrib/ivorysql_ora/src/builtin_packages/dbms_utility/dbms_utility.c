@@ -66,6 +66,10 @@ static bool lookup_attempted = false;
 static void
 lookup_plisql_functions(void)
 {
+#ifndef WIN32
+	void	   *fn;
+#endif
+
 	if (lookup_attempted)
 		return;
 
@@ -77,8 +81,6 @@ lookup_plisql_functions(void)
 	 * plisql.so should already be loaded when these functions are called
 	 * from within a PL/iSQL context.
 	 */
-	void *fn;
-
 	fn = dlsym(RTLD_DEFAULT, "plisql_get_current_exception_context");
 	if (fn != NULL)
 		get_exception_context_fn = (plisql_get_context_fn) fn;
@@ -94,8 +96,11 @@ lookup_plisql_functions(void)
 	fn = dlsym(RTLD_DEFAULT, "plisql_get_call_stack");
 	if (fn != NULL)
 		get_call_stack_fn = (plisql_get_call_stack_fn) fn;
+#else
+	/* On Windows, dynamic symbol lookup is not supported */
+	ereport(DEBUG1,
+			(errmsg("DBMS_UTILITY functions not available on Windows")));
 #endif
-	/* On Windows, function pointers remain NULL - features require plisql */
 }
 
 /*
@@ -168,7 +173,7 @@ transform_and_append_line(StringInfo result, const char *line)
 		}
 
 		line_num_start = line_marker + 6; /* Skip " line " */
-		line_num = atoi(line_num_start);
+		line_num = (int) strtol(line_num_start, NULL, 10);
 
 		appendStringInfo(result, "ORA-06512: at line %d\n", line_num);
 		pfree(func_name);
@@ -185,7 +190,7 @@ transform_and_append_line(StringInfo result, const char *line)
 	}
 
 	line_num_start = line_marker + 6; /* Skip " line " */
-	line_num = atoi(line_num_start);
+	line_num = (int) strtol(line_num_start, NULL, 10);
 
 	/* For now, just use PUBLIC as the default schema */
 	/* TODO: Look up the actual schema from pg_proc catalog */
@@ -264,7 +269,11 @@ ora_format_error_backtrace(PG_FUNCTION_ARGS)
 
 	pfree(context_copy);
 
-	PG_RETURN_TEXT_P(cstring_to_text(result.data));
+	{
+		text *result_text = cstring_to_text(result.data);
+		pfree(result.data);
+		PG_RETURN_TEXT_P(result_text);
+	}
 }
 
 /*
@@ -337,7 +346,11 @@ ora_format_error_stack(PG_FUNCTION_ARGS)
 	/* Format: ORA-XXXXX: <message> */
 	appendStringInfo(&result, "%s: %s\n", sqlstate_to_ora_errnum(sqlerrcode), message);
 
-	PG_RETURN_TEXT_P(cstring_to_text(result.data));
+	{
+		text *result_text = cstring_to_text(result.data);
+		pfree(result.data);
+		PG_RETURN_TEXT_P(result_text);
+	}
 }
 
 /*
@@ -462,5 +475,9 @@ ora_format_call_stack(PG_FUNCTION_ARGS)
 		PG_RETURN_NULL();
 	}
 
-	PG_RETURN_TEXT_P(cstring_to_text(result.data));
+	{
+		text *result_text = cstring_to_text(result.data);
+		pfree(result.data);
+		PG_RETURN_TEXT_P(result_text);
+	}
 }

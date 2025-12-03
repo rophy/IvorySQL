@@ -9490,6 +9490,7 @@ plisql_xact_cb(XactEvent event, void *arg)
 		event == XACT_EVENT_PREPARE)
 	{
 		simple_econtext_stack = NULL;
+		exception_handling_estate = NULL;
 
 		if (shared_simple_eval_estate)
 			FreeExecutorState(shared_simple_eval_estate);
@@ -9502,6 +9503,7 @@ plisql_xact_cb(XactEvent event, void *arg)
 			 event == XACT_EVENT_PARALLEL_ABORT)
 	{
 		simple_econtext_stack = NULL;
+		exception_handling_estate = NULL;
 		shared_simple_eval_estate = NULL;
 		shared_simple_eval_resowner = NULL;
 	}

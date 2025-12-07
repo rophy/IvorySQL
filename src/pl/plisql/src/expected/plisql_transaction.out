@@ -55,8 +55,6 @@ CONTEXT:  PL/iSQL function transaction_test1(pg_catalog.int4,text) line 6 at COM
 COMMIT;
 START TRANSACTION;
 DO LANGUAGE plisql $$ BEGIN COMMIT; END $$;
-ERROR:  invalid transaction termination
-CONTEXT:  PL/iSQL function inline_code_block line 1 at COMMIT
 COMMIT;
 TRUNCATE test1;
 -- not allowed in a function
@@ -482,8 +480,7 @@ begin
   raise notice 'length(x) = %', length(x);
 end $$;
 /
-ERROR:  invalid transaction termination
-CONTEXT:  PL/iSQL function inline_code_block line 6 at COMMIT
+NOTICE:  length(x) = 10000
 -- operations on composite types vs. internal transactions
 DO LANGUAGE plisql $$
 declare

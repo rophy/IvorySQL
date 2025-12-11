@@ -7052,7 +7052,15 @@ plisql_param_compile(ParamListInfo params, Param *param,
 	{
 		bool		isvarlena = (((PLiSQL_var *) datum)->datatype->typlen == -1);
 
-		if (isvarlena && dno == expr->target_param && expr->expr_simple_expr)
+		/*
+		 * The RW-optimization requires paramid to match target_param + 1.
+		 * For package variables, paramid uses datum->dno (package's datum index)
+		 * which differs from the function's datum index used for target_param.
+		 * Exclude package variables from RW-optimization to avoid assertion
+		 * failures in exec_check_rw_parameter().
+		 */
+		if (isvarlena && !OidIsValid(datum->pkgoid) &&
+			dno == expr->target_param && expr->expr_simple_expr)
 			scratch.d.cparam.paramfunc = plisql_param_eval_var_check;
 		else if (isvarlena)
 			scratch.d.cparam.paramfunc = plisql_param_eval_var_ro;

@@ -53,10 +53,12 @@ if host_system == 'windows'
     '--FILEDESC', 'PL/iSQL - procedural language',])
 endif
 
+plisql_inc = include_directories('.')
+
 plisql = shared_module('plisql',
   plisql_sources,
   c_pch: pch_postgres_h,
-  include_directories: include_directories('.'),
+  include_directories: plisql_inc,
   link_with: ora_parser,
   kwargs: pg_mod_args,
 )

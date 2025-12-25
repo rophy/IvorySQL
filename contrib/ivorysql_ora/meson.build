@@ -26,6 +26,7 @@ ivorysql_ora_sources = files(
   'src/merge/ora_merge.c',
   'src/sysview/sysview_functions.c',
   'src/xml_functions/ora_xml_functions.c',
+  'src/builtin_packages/dbms_utility/dbms_utility.c',
 )
 
 if host_system == 'windows'
@@ -44,6 +45,7 @@ custom_target('ivorysql_ora--1.0.sql',
 
 ivorysql_ora = shared_module('ivorysql_ora',
   ivorysql_ora_sources,
+  include_directories: plisql_inc,
   kwargs: contrib_mod_args,
 )
 contrib_targets += ivorysql_ora
@@ -64,16 +66,29 @@ tests += {
   'bd': meson.current_build_dir(),
   'regress': {
     'sql': [
-      'check',
-      'check_btree',
-      'check_heap',
+      'ora_character',
+      'ora_datetime',
+      'ora_interval',
+      'ora_number',
+      'ora_binary_float',
+      'ora_binary_double',
+      'ora_raw_long',
+      'ora_character_datatype_functions',
+      'ora_datetime_datatype_functions',
+      'ora_misc_functions',
+      'ora_merge',
+      'datatype_and_func_bugs',
+      'ora_sysview',
+      'ora_like_operator',
+      'ora_xml_functions',
+      'dbms_utility',
     ],
-  },
-  'tap': {
-    'tests': [
-      't/001_verify_heapam.pl',
-      't/002_cic.pl',
-      't/003_cic_2pc.pl',
-    ],
+    'tap': {
+      'tests': [
+        't/001_verify_heapam.pl',
+        't/002_cic.pl',
+        't/003_cic_2pc.pl',
+      ]
+    },
   },
 }

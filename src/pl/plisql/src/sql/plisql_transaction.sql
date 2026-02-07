@@ -393,6 +393,7 @@ INSERT INTO test4 SELECT repeat('xyzzy', 2000);
 -- that will return a still-toasted value
 CREATE FUNCTION data_source(i int) RETURNS TEXT LANGUAGE sql
 AS 'select f1 from test4' IMMUTABLE;
+/
 
 DO $$
 declare x text;

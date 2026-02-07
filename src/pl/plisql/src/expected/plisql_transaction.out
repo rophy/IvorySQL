@@ -55,6 +55,8 @@ CONTEXT:  PL/iSQL function transaction_test1(pg_catalog.int4,text) line 6 at COM
 COMMIT;
 START TRANSACTION;
 DO LANGUAGE plisql $$ BEGIN COMMIT; END $$;
+ERROR:  invalid transaction termination
+CONTEXT:  PL/iSQL function inline_code_block line 1 at COMMIT
 COMMIT;
 TRUNCATE test1;
 -- not allowed in a function
@@ -470,6 +472,7 @@ INSERT INTO test4 SELECT repeat('xyzzy', 2000);
 -- that will return a still-toasted value
 CREATE FUNCTION data_source(i int) RETURNS TEXT LANGUAGE sql
 AS 'select f1 from test4' IMMUTABLE;
+/
 DO $$
 declare x text;
 begin
@@ -479,8 +482,8 @@ begin
   end loop;
   raise notice 'length(x) = %', length(x);
 end $$;
-/
 NOTICE:  length(x) = 10000
+/
 -- operations on composite types vs. internal transactions
 DO LANGUAGE plisql $$
 declare

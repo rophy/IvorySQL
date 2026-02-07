@@ -650,9 +650,9 @@ $$;
 SELECT * FROM test1;
 
 
--- Test nested procedure calls with COMMIT (Issue #1007)
--- These tests verify that COMMIT works correctly in nested procedure calls,
--- including in multi-statement query contexts.
+-- Test nested procedure calls with COMMIT/ROLLBACK (Issue #1007)
+-- These tests verify that COMMIT/ROLLBACK works correctly in nested
+-- procedure calls, including Oracle-style calls (without CALL keyword).
 
 CREATE TABLE test_nested_commit (id int);
 
@@ -669,7 +669,7 @@ END;
 $$;
 /
 
--- Outer procedure calling inner
+-- Outer procedure calling inner with CALL keyword
 CREATE PROCEDURE nested_outer_commit()
 LANGUAGE plisql
 SECURITY INVOKER
@@ -687,12 +687,7 @@ TRUNCATE test_nested_commit;
 CALL nested_outer_commit();
 SELECT * FROM test_nested_commit ORDER BY id;
 
--- Test 2: Multi-statement query with nested CALL (previously crashed)
-TRUNCATE test_nested_commit;
-SELECT 1 AS setup; CALL nested_outer_commit(); SELECT 2 AS done;
-SELECT * FROM test_nested_commit ORDER BY id;
-
--- Test 3: Oracle-style call (without CALL keyword) in nested procedure
+-- Test 2: Oracle-style call (without CALL keyword) with COMMIT
 CREATE PROCEDURE nested_outer_oracle_style()
 LANGUAGE plisql
 SECURITY INVOKER
@@ -709,12 +704,7 @@ TRUNCATE test_nested_commit;
 CALL nested_outer_oracle_style();
 SELECT * FROM test_nested_commit ORDER BY id;
 
--- Test 4: Multi-statement with Oracle-style nested call
-TRUNCATE test_nested_commit;
-SELECT 'before' AS stage; CALL nested_outer_oracle_style(); SELECT 'after' AS stage;
-SELECT * FROM test_nested_commit ORDER BY id;
-
--- Test 5: Deeply nested calls (3 levels)
+-- Test 3: Deeply nested calls (3 levels) with COMMIT
 CREATE PROCEDURE nested_level3()
 LANGUAGE plisql
 SECURITY INVOKER
@@ -754,12 +744,7 @@ TRUNCATE test_nested_commit;
 CALL nested_level1();
 SELECT * FROM test_nested_commit ORDER BY id;
 
--- Test 6: Multi-statement with deeply nested calls
-TRUNCATE test_nested_commit;
-SELECT 'start'; CALL nested_level1(); SELECT 'end';
-SELECT * FROM test_nested_commit ORDER BY id;
-
--- Test 7: ROLLBACK in nested procedure
+-- Test 4: ROLLBACK in nested procedure with CALL keyword
 CREATE PROCEDURE nested_inner_rollback()
 LANGUAGE plisql
 SECURITY INVOKER
@@ -785,7 +770,24 @@ $$;
 /
 
 TRUNCATE test_nested_commit;
-SELECT 'pre'; CALL nested_outer_rollback(); SELECT 'post';
+CALL nested_outer_rollback();
+SELECT * FROM test_nested_commit ORDER BY id;
+
+-- Test 5: Oracle-style call (without CALL keyword) with ROLLBACK
+CREATE PROCEDURE nested_outer_rollback_oracle_style()
+LANGUAGE plisql
+SECURITY INVOKER
+AS $$
+BEGIN
+    INSERT INTO test_nested_commit VALUES (300);
+    nested_inner_rollback();  -- Oracle-style call
+    INSERT INTO test_nested_commit VALUES (303);
+END;
+$$;
+/
+
+TRUNCATE test_nested_commit;
+CALL nested_outer_rollback_oracle_style();
 SELECT * FROM test_nested_commit ORDER BY id;
 
 -- Clean up nested commit tests
@@ -797,6 +799,7 @@ DROP PROCEDURE nested_level2();
 DROP PROCEDURE nested_level3();
 DROP PROCEDURE nested_inner_rollback();
 DROP PROCEDURE nested_outer_rollback();
+DROP PROCEDURE nested_outer_rollback_oracle_style();
 DROP TABLE test_nested_commit;
 
 

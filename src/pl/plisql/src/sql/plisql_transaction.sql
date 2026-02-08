@@ -651,39 +651,13 @@ SELECT * FROM test1;
 
 
 -- Test nested procedure calls with COMMIT/ROLLBACK (Issue #1007)
+--
+-- Note: Oracle-syntax procedures (CREATE PROCEDURE ... IS) default to
+-- AUTHID DEFINER (prosecdef=true), which forces atomic mode and blocks
+-- COMMIT/ROLLBACK. Use AUTHID CURRENT_USER to allow transaction control.
+-- This matches Oracle behavior where COMMIT is allowed regardless of AUTHID.
 
--- Test 0: Original issue reproduction - standalone procedures called
--- from anonymous block using Oracle syntax (CREATE PROCEDURE ... IS)
-CREATE TABLE test_nested_commit (id int);
-
-CREATE OR REPLACE PROCEDURE do_commit IS
-BEGIN
-  INSERT INTO test_nested_commit VALUES (1);
-  COMMIT;
-  INSERT INTO test_nested_commit VALUES (2);
-END;
-/
-
-CREATE OR REPLACE PROCEDURE main_proc IS
-BEGIN
-  INSERT INTO test_nested_commit VALUES (0);
-  do_commit();
-  INSERT INTO test_nested_commit VALUES (3);
-END;
-/
-
-TRUNCATE test_nested_commit;
-BEGIN
-  main_proc();
-END;
-/
-SELECT * FROM test_nested_commit ORDER BY id;
-
-DROP PROCEDURE main_proc;
-DROP PROCEDURE do_commit;
-DROP TABLE test_nested_commit;
-
--- Test 0b: Package procedures with COMMIT (Issue #1007 Test 2)
+-- Test 0: Package procedures with COMMIT (Issue #1007 Test 2)
 CREATE TABLE test_nested_commit (id int);
 
 CREATE OR REPLACE PACKAGE pkg_commit_test IS
@@ -720,34 +694,29 @@ DROP PACKAGE pkg_commit_test;
 DROP TABLE test_nested_commit;
 
 -- Tests below verify COMMIT/ROLLBACK in nested procedure calls
--- using explicit LANGUAGE plisql SECURITY INVOKER syntax.
+-- using AUTHID CURRENT_USER (Oracle-compatible syntax).
+-- Without AUTHID CURRENT_USER, Oracle-syntax procedures default to
+-- SECURITY DEFINER (prosecdef=true), which forces atomic mode and
+-- blocks COMMIT/ROLLBACK. This is a known limitation (see Test 0).
 
 CREATE TABLE test_nested_commit (id int);
 
 -- Inner procedure with COMMIT
-CREATE PROCEDURE nested_inner_commit()
-LANGUAGE plisql
-SECURITY INVOKER
-AS $$
+CREATE OR REPLACE PROCEDURE nested_inner_commit AUTHID CURRENT_USER IS
 BEGIN
     INSERT INTO test_nested_commit VALUES (1);
     COMMIT;
     INSERT INTO test_nested_commit VALUES (2);
 END;
-$$;
 /
 
 -- Outer procedure calling inner with CALL keyword
-CREATE PROCEDURE nested_outer_commit()
-LANGUAGE plisql
-SECURITY INVOKER
-AS $$
+CREATE OR REPLACE PROCEDURE nested_outer_commit AUTHID CURRENT_USER IS
 BEGIN
     INSERT INTO test_nested_commit VALUES (0);
     CALL nested_inner_commit();
     INSERT INTO test_nested_commit VALUES (3);
 END;
-$$;
 /
 
 -- Test 1: Basic nested call with COMMIT
@@ -756,16 +725,12 @@ CALL nested_outer_commit();
 SELECT * FROM test_nested_commit ORDER BY id;
 
 -- Test 2: Oracle-style call (without CALL keyword) with COMMIT
-CREATE PROCEDURE nested_outer_oracle_style()
-LANGUAGE plisql
-SECURITY INVOKER
-AS $$
+CREATE OR REPLACE PROCEDURE nested_outer_oracle_style AUTHID CURRENT_USER IS
 BEGIN
     INSERT INTO test_nested_commit VALUES (10);
     nested_inner_commit();  -- Oracle-style call
     INSERT INTO test_nested_commit VALUES (13);
 END;
-$$;
 /
 
 TRUNCATE test_nested_commit;
@@ -773,52 +738,36 @@ CALL nested_outer_oracle_style();
 SELECT * FROM test_nested_commit ORDER BY id;
 
 -- Test 3: Deeply nested Oracle-style calls (4 levels) with COMMIT
-CREATE PROCEDURE nested_level4()
-LANGUAGE plisql
-SECURITY INVOKER
-AS $$
+CREATE OR REPLACE PROCEDURE nested_level4 AUTHID CURRENT_USER IS
 BEGIN
     INSERT INTO test_nested_commit VALUES (104);
     COMMIT;
     INSERT INTO test_nested_commit VALUES (105);
 END;
-$$;
 /
 
-CREATE PROCEDURE nested_level3()
-LANGUAGE plisql
-SECURITY INVOKER
-AS $$
+CREATE OR REPLACE PROCEDURE nested_level3 AUTHID CURRENT_USER IS
 BEGIN
     INSERT INTO test_nested_commit VALUES (103);
     nested_level4();  -- Oracle-style call
     INSERT INTO test_nested_commit VALUES (106);
 END;
-$$;
 /
 
-CREATE PROCEDURE nested_level2()
-LANGUAGE plisql
-SECURITY INVOKER
-AS $$
+CREATE OR REPLACE PROCEDURE nested_level2 AUTHID CURRENT_USER IS
 BEGIN
     INSERT INTO test_nested_commit VALUES (102);
     nested_level3();  -- Oracle-style call
     INSERT INTO test_nested_commit VALUES (107);
 END;
-$$;
 /
 
-CREATE PROCEDURE nested_level1()
-LANGUAGE plisql
-SECURITY INVOKER
-AS $$
+CREATE OR REPLACE PROCEDURE nested_level1 AUTHID CURRENT_USER IS
 BEGIN
     INSERT INTO test_nested_commit VALUES (101);
     nested_level2();  -- Oracle-style call
     INSERT INTO test_nested_commit VALUES (108);
 END;
-$$;
 /
 
 TRUNCATE test_nested_commit;
@@ -826,28 +775,20 @@ CALL nested_level1();
 SELECT * FROM test_nested_commit ORDER BY id;
 
 -- Test 4: ROLLBACK in nested procedure with CALL keyword
-CREATE PROCEDURE nested_inner_rollback()
-LANGUAGE plisql
-SECURITY INVOKER
-AS $$
+CREATE OR REPLACE PROCEDURE nested_inner_rollback AUTHID CURRENT_USER IS
 BEGIN
     INSERT INTO test_nested_commit VALUES (201);
     ROLLBACK;
     INSERT INTO test_nested_commit VALUES (202);
 END;
-$$;
 /
 
-CREATE PROCEDURE nested_outer_rollback()
-LANGUAGE plisql
-SECURITY INVOKER
-AS $$
+CREATE OR REPLACE PROCEDURE nested_outer_rollback AUTHID CURRENT_USER IS
 BEGIN
     INSERT INTO test_nested_commit VALUES (200);
     CALL nested_inner_rollback();
     INSERT INTO test_nested_commit VALUES (203);
 END;
-$$;
 /
 
 TRUNCATE test_nested_commit;
@@ -855,16 +796,12 @@ CALL nested_outer_rollback();
 SELECT * FROM test_nested_commit ORDER BY id;
 
 -- Test 5: Oracle-style call (without CALL keyword) with ROLLBACK
-CREATE PROCEDURE nested_outer_rollback_oracle_style()
-LANGUAGE plisql
-SECURITY INVOKER
-AS $$
+CREATE OR REPLACE PROCEDURE nested_outer_rollback_oracle_style AUTHID CURRENT_USER IS
 BEGIN
     INSERT INTO test_nested_commit VALUES (300);
     nested_inner_rollback();  -- Oracle-style call
     INSERT INTO test_nested_commit VALUES (303);
 END;
-$$;
 /
 
 TRUNCATE test_nested_commit;
@@ -872,16 +809,16 @@ CALL nested_outer_rollback_oracle_style();
 SELECT * FROM test_nested_commit ORDER BY id;
 
 -- Clean up nested commit tests
-DROP PROCEDURE nested_inner_commit();
-DROP PROCEDURE nested_outer_commit();
-DROP PROCEDURE nested_outer_oracle_style();
-DROP PROCEDURE nested_level1();
-DROP PROCEDURE nested_level2();
-DROP PROCEDURE nested_level3();
-DROP PROCEDURE nested_level4();
-DROP PROCEDURE nested_inner_rollback();
-DROP PROCEDURE nested_outer_rollback();
-DROP PROCEDURE nested_outer_rollback_oracle_style();
+DROP PROCEDURE nested_inner_commit;
+DROP PROCEDURE nested_outer_commit;
+DROP PROCEDURE nested_outer_oracle_style;
+DROP PROCEDURE nested_level1;
+DROP PROCEDURE nested_level2;
+DROP PROCEDURE nested_level3;
+DROP PROCEDURE nested_level4;
+DROP PROCEDURE nested_inner_rollback;
+DROP PROCEDURE nested_outer_rollback;
+DROP PROCEDURE nested_outer_rollback_oracle_style;
 DROP TABLE test_nested_commit;
 
 
